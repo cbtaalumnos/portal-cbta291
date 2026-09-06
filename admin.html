@@ -645,21 +645,30 @@ async function verTablero(){
 
     <h3 style="font-size:15px;margin:26px 0 12px">Alumnos en riesgo</h3>
     <div class="tarjeta">
-      <h3>Materias reprobadas
+      <h3>Con tres o más materias reprobadas
         <span style="font-weight:400;color:var(--texto-suave)">(${(r.alumnos_en_riesgo||[]).length})</span>
         <span class="der">${(r.alumnos_en_riesgo||[]).length
           ? '<button class="boton tenue chico" id="btnExpRiesgo">Exportar a CSV</button>' : ''}</span></h3>
       ${(r.alumnos_en_riesgo||[]).length ? `
         <div class="tabla-marco"><table class="datos">
-          <thead><tr><th>Matrícula</th><th>Alumno</th><th>Grupo</th><th>Materia</th>
-            <th class="n">Calificación</th><th>Docente</th></tr></thead>
-          <tbody>${r.alumnos_en_riesgo.map(x => `<tr>
-            <td>${escapar(x.matricula)}</td><td>${escapar(x.alumno)}</td>
-            <td>${escapar(x.grupo)}</td><td>${escapar(x.materia)}</td>
-            <td class="n"><span class="sello cae">${nota(x.calificacion_final)}</span></td>
-            <td style="color:var(--texto-suave)">${escapar(x.docente ?? '')}</td></tr>`).join('')}
-          </tbody></table></div>`
-        : '<div class="vacio"><div class="g">◆</div><p>Ningún alumno con materias reprobadas.</p></div>'}
+          <thead><tr><th>Alumno</th><th>Grupo</th><th class="n">Reprobadas</th>
+            <th class="n">Más baja</th><th>Materias</th></tr></thead>
+          <tbody>${r.alumnos_en_riesgo.map(x => `<tr class="franja ${
+              x.materias_reprobadas >= 5 ? 'cae' : 'riesgo'}">
+            <td><b>${escapar(x.alumno)}</b>
+              <div style="color:var(--texto-suave);font-size:12px">${escapar(x.matricula)}</div></td>
+            <td>${escapar(x.grupo ?? '—')}</td>
+            <td class="n"><span class="sello cae">${x.materias_reprobadas}</span></td>
+            <td class="n">${nota(x.calificacion_mas_baja)}</td>
+            <td style="color:var(--texto-suave);font-size:12.5px;max-width:420px">${escapar(x.materias)}</td>
+          </tr>`).join('')}
+          </tbody></table></div>
+        <p class="aviso-nota" style="padding:0 17px 15px">
+          Se considera en riesgo a quien lleva tres o más materias reprobadas.
+          Para ver todas las materias reprobadas del plantel, incluidas las de
+          alumnos con una o dos, usa el respaldo de calificaciones.
+        </p>`
+        : '<div class="vacio"><div class="g">◆</div><p>Ningún alumno con tres o más materias reprobadas.</p></div>'}
     </div>`;
 
   const bg = $('#btnExpGrupos');
@@ -670,7 +679,8 @@ async function verTablero(){
 
   const br = $('#btnExpRiesgo');
   if(br) br.addEventListener('click', () => exportarCSV('alumnos_en_riesgo', r.alumnos_en_riesgo,
-    ['matricula','alumno','grupo','materia','calificacion_final','docente']));
+    ['matricula','alumno','grupo','semestre','materias_reprobadas',
+     'calificacion_mas_baja','promedio_reprobadas','materias']));
 }
 
 /* ==========================================================================
