@@ -720,9 +720,11 @@ function fichaHTML(perfil){
 
 /* ---- Inicio -------------------------------------------------------------- */
 async function verInicio(){
+  // Los documentos se piden siempre frescos: su estado cambia cuando
+  // Control Escolar los revisa, y un dato viejo confunde al alumno.
   const [perfil, calif, asis, docs, avisos] = await Promise.all([
     traer('perfil'), traer('calificaciones'), traer('asistencia'),
-    traer('documentos'), traer('avisos')
+    traer('documentos', true), traer('avisos')
   ]);
 
   const notas = calif.calificaciones
@@ -740,7 +742,13 @@ async function verInicio(){
   }, {clases:0, buenas:0, faltas:0});
   const porcAsis = totales.clases ? Math.round(100*totales.buenas/totales.clases) : null;
 
-  const pendientes = docs.documentos.filter(d => d.estado === 'PENDIENTE' && d.obligatorio).length;
+  // Un documento cuenta como pendiente mientras no esté aceptado. Los
+  // devueltos con observaciones también faltan: el alumno tiene que subirlos
+  // otra vez corregidos.
+  const faltanDocs = docs.documentos.filter(d =>
+    d.obligatorio && !['ENTREGADO','NO_APLICA'].includes(d.estado));
+  const pendientes = faltanDocs.length;
+  const porCorregir = faltanDocs.filter(d => d.estado === 'OBSERVACIONES').length;
 
   $('#vista').innerHTML = `
     ${fichaHTML(perfil)}
@@ -764,7 +772,10 @@ async function verInicio(){
       <div class="medidor ${pendientes ? 'alerta' : 'bien'}">
         <div class="r">Documentos pendientes</div>
         <div class="v">${pendientes}</div>
-        <div class="n">${pendientes ? 'Entrégalos en Control Escolar' : 'Expediente completo'}</div>
+        <div class="n">${
+          !pendientes ? 'Expediente completo'
+          : porCorregir ? `${porCorregir} por corregir · súbelos desde Documentos`
+          : 'Súbelos desde Documentos'}</div>
       </div>
     </div>
 
@@ -1309,11 +1320,15 @@ const SELLO_DOC = {
 async function verDocumentos(){
   const r = await traer('documentos', true);
   const d = r.documentos;
-  const faltan = d.filter(x => x.obligatorio && ['PENDIENTE','OBSERVACIONES'].includes(x.estado)).length;
+  const faltantes = d.filter(x => x.obligatorio && !['ENTREGADO','NO_APLICA'].includes(x.estado));
+  const faltan = faltantes.length;
+  const devueltos = faltantes.filter(x => x.estado === 'OBSERVACIONES').length;
 
   $('#vista').innerHTML = `
     ${faltan
-      ? `<div class="recado ojo" style="margin-top:0">Te falta${faltan===1?'':'n'} ${faltan} documento${faltan===1?'':'s'}. Súbelo${faltan===1?'':'s'} desde aquí.</div>`
+      ? `<div class="recado ojo" style="margin-top:0">Te falta${faltan===1?'':'n'} ${faltan} documento${faltan===1?'':'s'}.${
+          devueltos ? ` ${devueltos} de ellos te ${devueltos===1?'fue devuelto':'fueron devueltos'} para corregir; abajo dice por qué.` : ''
+        } Súbelo${faltan===1?'':'s'} desde aquí.</div>`
       : `<div class="recado bien" style="margin-top:0">Tu expediente está completo.</div>`}
 
     <p style="margin:16px 0;font-size:13.5px;color:var(--texto-suave);max-width:70ch">
