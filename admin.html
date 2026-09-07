@@ -1629,7 +1629,10 @@ async function verDocumentos(){
 
   const esp = bandeja.espacio || {};
   const mb = Number(esp.total_mb || 0);
-  const porc = Math.min(100, Math.round(mb / 500 * 100));
+  // Los documentos viven en Supabase Storage, que da 1 GB aparte de los
+  // 500 MB de la base de datos.
+  const LIMITE_MB = 1024;
+  const porc = Math.min(100, Math.round(mb / LIMITE_MB * 100));
 
   const nombreAl = a => `${a.apellido_paterno} ${a.apellido_materno ?? ''} ${a.nombres}`.trim();
 
@@ -1640,13 +1643,13 @@ async function verDocumentos(){
       <div class="medidor bien"><div class="r">Aceptados</div><div class="v">${esp.aceptados ?? 0}</div></div>
       <div class="medidor"><div class="r">Con observaciones</div><div class="v">${esp.con_observaciones ?? 0}</div></div>
       <div class="medidor ${porc > 70 ? 'alerta':''}">
-        <div class="r">Espacio usado</div><div class="v">${mb} MB</div>
-        <div class="n">${porc}% de 500 MB · promedio ${esp.promedio_kb ?? 0} KB</div></div>
+        <div class="r">Espacio en Storage</div><div class="v">${mb} MB</div>
+        <div class="n">${porc}% de 1 GB · promedio ${esp.promedio_kb ?? 0} KB</div></div>
     </div>
 
     ${porc > 70 ? `<div class="recado ojo" style="margin-top:16px">
-      Los archivos ya ocupan ${mb} MB de los 500 MB disponibles. Conviene mover los
-      documentos a un almacenamiento aparte antes de llegar al límite.</div>` : ''}
+      Los documentos ya ocupan ${mb} MB del 1 GB disponible en Storage. Archiva las
+      generaciones que hayan egresado desde «Cierre de ciclo» para liberar espacio.</div>` : ''}
 
     <div class="tarjeta" style="margin-top:20px">
       <h3>Documentos por revisar
@@ -2372,9 +2375,9 @@ async function verRespaldo(){
       <h3>Almacenamiento de documentos</h3>
       <div class="cuerpo">
         <p style="font-size:13px;color:var(--texto-suave);max-width:70ch;margin-bottom:14px">
-          Los documentos viven en Supabase Storage, que tiene 1 GB aparte de los
-          500 MB de la base de datos. Si quedaron archivos guardados dentro de la
-          base de una versión anterior, aquí se pasan.
+          Los documentos viven en Supabase Storage, con 1 GB propio, separado de
+          los 500 MB de la base de datos. Si quedaron archivos guardados dentro de
+          la base de una versión anterior, aquí se pasan.
         </p>
         <div id="estadoMigracion" class="cargando" style="padding:12px">Revisando…</div>
       </div>
