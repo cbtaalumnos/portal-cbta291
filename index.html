@@ -1424,14 +1424,10 @@ async function verDocumentos(){
    firmado de Storage, que es lo normal, o como data URL si todavía no se
    ha migrado. El enlace caduca en cinco minutos. */
 function abrirDocumento(doc){
-  if(doc.url){
-    // Los enlaces firmados sí se pueden abrir en pestaña nueva
-    window.open(doc.url, '_blank', 'noopener');
-    return;
-  }
-  if(!doc.archivo){ alert('No se pudo abrir el archivo.'); return; }
-  if(String(doc.archivo).startsWith('data:application/pdf')) descargarImagen(doc.archivo);
-  else ampliarHorario(doc.archivo);
+  // Llega como enlace firmado de Storage, que caduca en cinco minutos.
+  // A diferencia de las data URL, estos sí se pueden abrir en pestaña nueva.
+  if(!doc?.url){ alert('No se pudo abrir el archivo.'); return; }
+  window.open(doc.url, '_blank', 'noopener');
 }
 
 /* ---- Avisos -------------------------------------------------------------- */
