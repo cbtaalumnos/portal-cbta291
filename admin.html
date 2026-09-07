@@ -1728,13 +1728,20 @@ async function revisarDocumento(regId, alCerrar){
     return;
   }
   const doc = r.documento;
-  const esPDF = String(doc.archivo || '').startsWith('data:application/pdf');
+  const nombre = String(doc.nombre_archivo || '').toLowerCase();
+  const esPDF = nombre.endsWith('.pdf')
+             || String(doc.archivo || '').startsWith('data:application/pdf')
+             || /\.pdf(\?|$)/.test(String(doc.url || ''));
+
+  // El archivo llega como enlace firmado de Storage, o como data URL si
+  // todavía no se ha migrado.
+  const fuente = doc.url || doc.archivo || '';
 
   $('#ventanaCuerpo').innerHTML = `
     ${esPDF
       ? `<div class="recado ojo">El alumno subió un PDF. Ábrelo para revisarlo.</div>
          <button class="boton tenue" id="abrirPDF" style="margin-top:12px">Abrir el PDF</button>`
-      : `<img src="${doc.archivo}" style="width:100%;border-radius:8px;border:1px solid var(--linea)">`}
+      : `<img src="${fuente}" style="width:100%;border-radius:8px;border:1px solid var(--linea)">`}
     <div class="campo" style="margin-top:16px">
       <label for="revObs">Observaciones para el alumno</label>
       <textarea id="revObs" placeholder="Ej. La foto salió borrosa, vuelve a tomarla con más luz.">${escapar(doc.observaciones ?? '')}</textarea>
@@ -1744,7 +1751,8 @@ async function revisarDocumento(regId, alCerrar){
 
   const pdfBtn = $('#abrirPDF');
   if(pdfBtn) pdfBtn.addEventListener('click', () => {
-    const [cab, b64] = doc.archivo.split(',');
+    if(doc.url){ window.open(doc.url, '_blank', 'noopener'); return; }
+    const [, b64] = doc.archivo.split(',');
     const bin = atob(b64); const bytes = new Uint8Array(bin.length);
     for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
     const url = URL.createObjectURL(new Blob([bytes], {type:'application/pdf'}));
@@ -2360,6 +2368,18 @@ async function verRespaldo(){
       </div>
     </div>
 
+    <div class="tarjeta" style="margin-top:20px" id="cajaMigracion">
+      <h3>Almacenamiento de documentos</h3>
+      <div class="cuerpo">
+        <p style="font-size:13px;color:var(--texto-suave);max-width:70ch;margin-bottom:14px">
+          Los documentos viven en Supabase Storage, que tiene 1 GB aparte de los
+          500 MB de la base de datos. Si quedaron archivos guardados dentro de la
+          base de una versión anterior, aquí se pasan.
+        </p>
+        <div id="estadoMigracion" class="cargando" style="padding:12px">Revisando…</div>
+      </div>
+    </div>
+
     <div class="tarjeta" style="margin-top:20px">
       <h3>Documentos subidos por los alumnos</h3>
       <div class="cuerpo">
@@ -2458,6 +2478,8 @@ async function verRespaldo(){
       }));
     }));
 
+  revisarMigracion();
+
   let indiceDocs = null;
 
   $('#btnCalcular').addEventListener('click', async ev => {
@@ -2498,20 +2520,36 @@ async function verRespaldo(){
 
         const r = await api('respaldo_archivos', {ids: tanda.map(d => d.id)});
         if(!r.ok) throw new Error(r.error);
-        const mapa = new Map(r.archivos.map(a => [a.id, a.archivo]));
 
-        tanda.forEach(d => {
+        // Storage entrega enlaces firmados: cada archivo se baja directo,
+        // sin pasar por la Edge Function.
+        const mapa = new Map();
+        for(const a of r.archivos){
+          if(a.url){
+            try {
+              const resp = await fetch(a.url);
+              if(resp.ok) mapa.set(a.id, await resp.blob());
+            } catch(e){ /* se omite este archivo */ }
+          } else if(a.archivo){
+            mapa.set(a.id, a.archivo);
+          }
+        }
+
+        for(const d of tanda){
           const data = mapa.get(d.id);
-          if(!data) return;
+          if(!data) continue;
           const a = d.alumnos || {};
           const g = a.grupos ? `${a.grupos.semestre}${a.grupos.letra}` : 'SIN_GRUPO';
           const quien = nombreArchivoSeguro(
             `${a.matricula}_${a.apellido_paterno} ${a.apellido_materno ?? ''} ${a.nombres}`);
           const doc = nombreArchivoSeguro(d.documentos_catalogo?.nombre ?? 'documento');
-          const ext = String(data).startsWith('data:application/pdf') ? 'pdf' : 'jpg';
+          const esBlob = data instanceof Blob;
+          const ext = esBlob
+            ? (data.type === 'application/pdf' ? 'pdf' : 'jpg')
+            : (String(data).startsWith('data:application/pdf') ? 'pdf' : 'jpg');
 
-          zip.file(`${g}/${quien}__${doc}.${ext}`,
-                   String(data).split(',')[1], {base64:true});
+          if(esBlob) zip.file(`${g}/${quien}__${doc}.${ext}`, data);
+          else zip.file(`${g}/${quien}__${doc}.${ext}`, String(data).split(',')[1], {base64:true});
 
           lista.push({
             grupo: g, matricula: a.matricula,
@@ -2519,7 +2557,7 @@ async function verRespaldo(){
             documento: d.documentos_catalogo?.nombre ?? '',
             estado: d.estado, peso_kb: d.peso_kb ?? '', subido_en: d.subido_en ?? ''
           });
-        });
+        }
       }
 
       // Lista de contenido dentro del propio ZIP
@@ -2551,6 +2589,65 @@ async function verRespaldo(){
         `<div class="recado mal" style="margin-top:14px">${escapar(err.message || 'Falló la descarga.')}</div>`;
     }
     ev.target.disabled = false;
+  });
+}
+
+
+/* Revisa cuántos documentos quedan dentro de la base de datos y ofrece
+   pasarlos a Storage. Se hace de diez en diez para no agotar el tiempo
+   de la Edge Function. */
+async function revisarMigracion(){
+  const caja = $('#estadoMigracion');
+  if(!caja) return;
+
+  const r = await api('listar', {
+    tabla:'v_espacio_documentos', columnas:'en_storage,en_base_de_datos,total_mb', limite:1});
+  const e = (r.ok && r.datos[0]) ? r.datos[0] : {};
+
+  if(!e.en_base_de_datos){
+    caja.className = '';
+    caja.innerHTML = `<div class="recado bien" style="margin-top:0">
+      Todo está en Storage: ${e.en_storage ?? 0} documentos, ${e.total_mb ?? 0} MB.
+      La base de datos no carga ningún archivo.</div>`;
+    return;
+  }
+
+  caja.className = '';
+  caja.innerHTML = `
+    <div class="recado ojo" style="margin-top:0">
+      Hay <b>${e.en_base_de_datos}</b> documentos guardados dentro de la base de datos
+      y ${e.en_storage ?? 0} ya en Storage. Pásalos para liberar espacio.
+    </div>
+    <button class="boton" id="btnMigrar" style="margin-top:14px">Pasar a Storage</button>
+    <div id="avanceMigracion"></div>`;
+
+  $('#btnMigrar').addEventListener('click', async ev => {
+    ev.target.disabled = true;
+    let total = 0, vueltas = 0;
+    const avance = $('#avanceMigracion');
+
+    while(vueltas < 100){
+      vueltas++;
+      const res = await api('migrar_a_storage');
+      if(!res.ok){
+        avance.innerHTML = `<div class="recado mal" style="margin-top:14px">${escapar(res.error)}</div>`;
+        break;
+      }
+      total += res.migrados;
+      avance.innerHTML = `<div class="recado ojo" style="margin-top:14px">
+        Migrados ${total}, faltan ${res.faltan}…</div>`;
+
+      if((res.fallos||[]).length){
+        avance.innerHTML += `<div class="recado mal" style="margin-top:8px">
+          ${res.fallos.map(escapar).join('<br>')}</div>`;
+      }
+      if(res.terminado || res.migrados === 0) break;
+    }
+
+    ev.target.disabled = false;
+    avance.innerHTML += `<div class="recado bien" style="margin-top:10px">
+      Listo. Se pasaron ${total} documentos a Storage.</div>`;
+    setTimeout(() => irA('respaldo'), 2000);
   });
 }
 

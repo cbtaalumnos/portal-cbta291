@@ -1405,10 +1405,8 @@ async function verDocumentos(){
     if(e.target.classList.contains('verDoc')){
       const res = await llamar('portal-alumno', {
         accion:'ver_documento', token:sesion.token, documento_id: docId});
-      if(!res.ok || !res.documento?.archivo){ alert('No se pudo abrir el archivo.'); return; }
-      const a = res.documento.archivo;
-      if(a.startsWith('data:application/pdf')) descargarImagen(a);
-      else ampliarHorario(a);
+      if(!res.ok || !res.documento){ alert('No se pudo abrir el archivo.'); return; }
+      abrirDocumento(res.documento);
     }
 
     if(e.target.classList.contains('quitarDoc')){
@@ -1420,6 +1418,20 @@ async function verDocumentos(){
       irA('documentos');
     }
   });
+}
+
+/* Abre un documento del alumno. Puede llegar de dos maneras: como enlace
+   firmado de Storage, que es lo normal, o como data URL si todavía no se
+   ha migrado. El enlace caduca en cinco minutos. */
+function abrirDocumento(doc){
+  if(doc.url){
+    // Los enlaces firmados sí se pueden abrir en pestaña nueva
+    window.open(doc.url, '_blank', 'noopener');
+    return;
+  }
+  if(!doc.archivo){ alert('No se pudo abrir el archivo.'); return; }
+  if(String(doc.archivo).startsWith('data:application/pdf')) descargarImagen(doc.archivo);
+  else ampliarHorario(doc.archivo);
 }
 
 /* ---- Avisos -------------------------------------------------------------- */
