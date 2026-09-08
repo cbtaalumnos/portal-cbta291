@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:ital,wdth,wght@0,75..125,400..800;1,75..125,400..700&display=swap" rel="stylesheet">
 <style>
 /* ==========================================================================
@@ -2060,8 +2061,9 @@ function verImportar(){
 
         <div class="campo" style="margin-top:18px">
           <label for="archivo">Archivo</label>
-          <input id="archivo" type="file" accept=".xls,.xlsx,.htm,.html,.csv">
-          <p class="pista">Se lee en tu computadora. Nada se guarda hasta que lo confirmes.</p>
+          <input id="archivo" type="file" accept=".xls,.xlsx,.htm,.html,.csv,.txt">
+          <p class="pista">Acepta el .xls de la SEP, un .xlsx guardado desde Excel o un .csv.
+             Se lee en tu computadora; nada se guarda hasta que lo confirmes.</p>
         </div>
 
         <div class="campo">
@@ -2081,6 +2083,12 @@ function verImportar(){
   $('#archivo').addEventListener('change', leerArchivo);
 }
 
+/* El archivo puede llegar en tres formatos:
+   - .xls de la SEP, que por dentro es una tabla HTML en codificación mezclada
+   - .xlsx de verdad, si alguien lo abrió en Excel y lo volvió a guardar
+   - .csv, si se exportó así
+   Se detecta por el contenido, no por la extensión, porque el .xls de la SEP
+   miente sobre lo que realmente es. */
 function leerArchivo(e){
   const f = e.target.files[0];
   if(!f) return;
@@ -2090,24 +2098,68 @@ function leerArchivo(e){
 
   const lector = new FileReader();
   lector.onload = () => {
-    try { procesarTexto(decodificarHibrido(lector.result)); }
-    catch(err){ recado('#recadoImp','No se pudo leer el archivo: ' + err.message); }
+    try {
+      const buffer = lector.result;
+      const primeros = new Uint8Array(buffer.slice(0, 4));
+
+      // Un .xlsx es un archivo comprimido: empieza con "PK"
+      if(primeros[0] === 0x50 && primeros[1] === 0x4B){
+        procesarXLSX(buffer);
+        return;
+      }
+
+      const texto = decodificarHibrido(buffer);
+      if(/<table/i.test(texto)) procesarTexto(texto);
+      else procesarCSV(texto);
+    } catch(err){
+      recado('#recadoImp','No se pudo leer el archivo: ' + err.message);
+    }
   };
   lector.onerror = () => recado('#recadoImp','No se pudo abrir el archivo.');
   lector.readAsArrayBuffer(f);
 }
 
-function procesarTexto(texto){
-  const doc = new DOMParser().parseFromString(texto, 'text/html');
-  const tabla = doc.querySelector('table');
-  if(!tabla) throw new Error('El archivo no contiene una tabla.');
+/* Excel real */
+function procesarXLSX(buffer){
+  if(typeof XLSX === 'undefined'){
+    recado('#recadoImp','No se pudo cargar el lector de Excel. Revisa tu conexión y recarga la página.');
+    return;
+  }
+  const libro = XLSX.read(new Uint8Array(buffer), {type:'array'});
+  const hoja = libro.Sheets[libro.SheetNames[0]];
+  if(!hoja) throw new Error('El archivo no tiene ninguna hoja.');
 
-  const renglones = Array.from(tabla.querySelectorAll('tr'));
-  if(renglones.length < 2) throw new Error('La tabla viene vacía.');
+  const matriz = XLSX.utils.sheet_to_json(hoja, {header:1, defval:'', raw:false, blankrows:false});
+  armarFilas(matriz);
+}
 
-  const encabezados = Array.from(renglones[0].querySelectorAll('th,td'))
-    .map(c => normTxt(c.textContent));
+/* Texto separado por comas, punto y coma o tabuladores */
+function procesarCSV(texto){
+  const lineas = texto.split(/\r?\n/).filter(l => l.trim());
+  if(lineas.length < 2) throw new Error('El archivo viene vacío.');
 
+  const sep = lineas[0].includes('\t') ? '\t' : (lineas[0].includes(';') ? ';' : ',');
+  const partir = linea => {
+    const salida = []; let actual = '', entreComillas = false;
+    for(let i = 0; i < linea.length; i++){
+      const c = linea[i];
+      if(c === '"'){
+        if(entreComillas && linea[i+1] === '"'){ actual += '"'; i++; }
+        else entreComillas = !entreComillas;
+      } else if(c === sep && !entreComillas){ salida.push(actual); actual = ''; }
+      else actual += c;
+    }
+    salida.push(actual);
+    return salida;
+  };
+  armarFilas(lineas.map(partir));
+}
+
+/* Recibe una matriz (primer renglón = encabezados) y construye las filas */
+function armarFilas(matriz){
+  if(!matriz.length) throw new Error('El archivo viene vacío.');
+
+  const encabezados = matriz[0].map(c => normTxt(c));
   const faltan = OBLIGATORIAS.filter(c => !encabezados.includes(c));
   if(faltan.length){
     recado('#recadoImp','Al archivo le faltan estas columnas: ' + faltan.join(', '));
@@ -2115,13 +2167,13 @@ function procesarTexto(texto){
   }
 
   const filas = [];
-  for(let i = 1; i < renglones.length; i++){
-    const celdas = Array.from(renglones[i].querySelectorAll('td'));
-    if(!celdas.length) continue;
+  for(let i = 1; i < matriz.length; i++){
+    const celdas = matriz[i];
+    if(!celdas || !celdas.length) continue;
     const o = {};
     encabezados.forEach((h, j) => {
       const campo = COLUMNAS_EXCEL[h];
-      if(campo) o[campo] = limpia(celdas[j]?.textContent);
+      if(campo) o[campo] = limpia(celdas[j]);
     });
     if(o.no_control && o.asignatura) filas.push(o);
   }
@@ -2131,6 +2183,19 @@ function procesarTexto(texto){
   filasLeidas = filas;
   recado('#recadoImp','');
   mostrarPrevia(filas);
+}
+
+/* Tabla HTML disfrazada de .xls, que es lo que exporta la SEP */
+function procesarTexto(texto){
+  const doc = new DOMParser().parseFromString(texto, 'text/html');
+  const tabla = doc.querySelector('table');
+  if(!tabla) throw new Error('El archivo no contiene una tabla.');
+
+  const matriz = Array.from(tabla.querySelectorAll('tr'))
+    .map(tr => Array.from(tr.querySelectorAll('th,td')).map(c => c.textContent));
+
+  if(matriz.length < 2) throw new Error('La tabla viene vacía.');
+  armarFilas(matriz);
 }
 
 // Misma regla que aplica la Edge Function
