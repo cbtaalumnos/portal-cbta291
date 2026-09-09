@@ -730,15 +730,16 @@ const CATALOGOS = {
     singular:'docente', orden:'nombre_completo',
     campos:[
       {c:'nombre_completo', r:'Nombre completo', req:true, ancho:'completo', ej:'Maribel Sanguino García'},
-      {c:'apellido_paterno', r:'Primer apellido (para ordenar)', ej:'Sanguino'},
-      {c:'titulo', r:'Título', tipo:'select', opciones:['Lic.','Ing.','Mtro.','Mtra.','Dr.','Dra.','C.','Profr.','Profra.']},
-      {c:'rfc', r:'RFC'},
-      {c:'clave', r:'Clave de empleado'},
-      {c:'correo', r:'Correo', tipo:'email'},
-      {c:'telefono', r:'Teléfono'},
+      {c:'apellido_paterno', r:'Primer apellido (para ordenar)', ej:'Sanguino', soloForma:true},
+      {c:'titulo', r:'Título', tipo:'select', soloForma:true,
+       opciones:['Lic.','Ing.','Mtro.','Mtra.','Dr.','Dra.','C.','Profr.','Profra.']},
+      {c:'rfc', r:'RFC', soloForma:true},
+      {c:'clave', r:'Clave de empleado', soloForma:true},
+      {c:'correo', r:'Correo', tipo:'email', soloForma:true},
+      {c:'telefono', r:'Teléfono', soloForma:true},
       {c:'activo', r:'Activo', tipo:'bool'}
     ],
-    nota:'La lista se ordena por primer apellido. Si dejas vacío ese campo, se toma la segunda palabra del nombre completo.'
+    nota:'La lista se ordena por primer apellido. Si dejas vacío ese campo, se toma la segunda palabra del nombre completo. El RFC y los demás datos siguen guardándose; solo no se muestran en la tabla.'
   },
   materias:{
     singular:'materia', orden:'semestre',
@@ -835,6 +836,10 @@ async function verCatalogo(tabla){
   if(!r.ok) throw new Error(r.error);
   const filas = ordenar(tabla, r.datos);
 
+  // Algunos campos se capturan pero no se listan, para que la tabla no se
+  // llene de columnas vacías que nadie consulta.
+  const camposTabla = def.campos.filter(c => !c.soloForma);
+
   $('#vista').innerHTML = `
     ${fp ? `<div class="herramientas">
       <div class="campo crece">
@@ -855,9 +860,9 @@ async function verCatalogo(tabla){
       ${filas.length ? `
         <div class="tabla-marco">
           <table class="datos">
-            <thead><tr>${def.campos.map(c => `<th>${escapar(c.r)}</th>`).join('')}<th></th></tr></thead>
+            <thead><tr>${camposTabla.map(c => `<th>${escapar(c.r)}</th>`).join('')}<th></th></tr></thead>
             <tbody>${filas.map(f => `<tr data-id="${f.id}">
-              ${def.campos.map(c => `<td>${celdaValor(c,f)}</td>`).join('')}
+              ${camposTabla.map(c => `<td>${celdaValor(c,f)}</td>`).join('')}
               <td class="acciones">
                 <button class="boton tenue chico editar">Editar</button>
                 <button class="boton tenue chico borrar">Borrar</button>
