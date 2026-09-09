@@ -2040,8 +2040,18 @@ function decodificarHibrido(buffer){
   return partes.join('');
 }
 
-function limpia(t){
-  return String(t ?? '').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim();
+/* Los .xlsx guardan el número de control y las calificaciones como números.
+   Convertirlos con el formato de Excel los arruina: la matrícula
+   24123012910001 se vuelve "2.4123E+13". Por eso se leen crudos y se
+   convierten aquí, donde sí se controla el resultado. */
+function limpia(v){
+  if(v === null || v === undefined) return '';
+  if(typeof v === 'number'){
+    if(Number.isInteger(v)) return String(v);
+    return String(Number(v.toFixed(4)));   // 8.5 sigue siendo 8.5
+  }
+  if(typeof v === 'boolean') return v ? 'SI' : 'NO';
+  return String(v).replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim();
 }
 function normTxt(t){
   return limpia(t).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();
@@ -2129,7 +2139,9 @@ function procesarXLSX(buffer){
   const hoja = libro.Sheets[libro.SheetNames[0]];
   if(!hoja) throw new Error('El archivo no tiene ninguna hoja.');
 
-  const matriz = XLSX.utils.sheet_to_json(hoja, {header:1, defval:'', raw:false, blankrows:false});
+  // raw:true entrega los valores reales. Con raw:false, Excel devuelve los
+  // números grandes en notación científica y la matrícula se corrompe.
+  const matriz = XLSX.utils.sheet_to_json(hoja, {header:1, defval:'', raw:true, blankrows:false});
   armarFilas(matriz);
 }
 
@@ -2231,6 +2243,14 @@ function mostrarPrevia(filas){
   if(sinRFC) alertas.push(`${sinRFC} filas traen docente sin RFC. Esas asignaturas quedarán sin docente.`);
   const curpMala = filas.filter(f => (f.curp||'').length !== 18).length;
   if(curpMala) alertas.push(`${curpMala} filas tienen una CURP que no mide 18 caracteres.`);
+
+  // Si Excel deformó el número de control, se detiene aquí y no se importa
+  const ncMala = filas.filter(f => /[eE]\+|[.,]/.test(String(f.no_control))).length;
+  if(ncMala){
+    alertas.push(`ALTO: ${ncMala} números de control vienen deformados, como "2.4123E+13". `
+      + `No importes este archivo: crearía alumnos falsos. Abre el Excel, selecciona la `
+      + `columna NO CONTROL, dale formato de Texto y vuelve a guardar.`);
+  }
   if(!conCalif) alertas.push('El archivo no trae calificaciones capturadas. Se creará la estructura y las calificaciones quedarán en blanco.');
 
   $('#previa').innerHTML = `
@@ -2286,7 +2306,8 @@ function mostrarPrevia(filas){
       </div></div>` : ''}
 
     <div style="margin-top:20px;display:flex;gap:10px;flex-wrap:wrap">
-      <button class="boton" id="btnConfirmar">Importar ${filas.length} filas</button>
+      <button class="boton" id="btnConfirmar"${ncMala ? ' disabled' : ''}>${
+        ncMala ? 'No se puede importar' : `Importar ${filas.length} filas`}</button>
       <button class="boton tenue" id="btnCancelar">Cancelar</button>
     </div>
     <div id="recadoFinal"></div>`;
