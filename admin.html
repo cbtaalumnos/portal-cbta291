@@ -533,7 +533,12 @@ async function verTablero(){
   const r = await api('estadisticas');
   if(!r.ok) throw new Error(r.error);
   const e = r.estadisticas || {};
-  const grupos = r.por_grupo || [];
+
+  // La vista los entrega sin orden. Se ordenan por semestre, luego letra y
+  // turno, para que salgan 1A 1B 1C 3A 3B 3C 5A 5B 5C, y el semestre que
+  // viene 2A 2B 2C 4A 4B 4C 6A 6B 6C.
+  const grupos = [...(r.por_grupo || [])].sort((a,b) =>
+    (a.semestre - b.semestre) || cmp(a.letra, b.letra) || cmp(a.turno, b.turno));
 
   const barra = (valor, max, color) => {
     const ancho = max ? Math.round(100 * valor / max) : 0;
@@ -730,16 +735,10 @@ const CATALOGOS = {
     singular:'docente', orden:'nombre_completo',
     campos:[
       {c:'nombre_completo', r:'Nombre completo', req:true, ancho:'completo', ej:'Maribel Sanguino García'},
-      {c:'apellido_paterno', r:'Primer apellido (para ordenar)', ej:'Sanguino', soloForma:true},
-      {c:'titulo', r:'Título', tipo:'select', soloForma:true,
-       opciones:['Lic.','Ing.','Mtro.','Mtra.','Dr.','Dra.','C.','Profr.','Profra.']},
       {c:'rfc', r:'RFC', soloForma:true},
-      {c:'clave', r:'Clave de empleado', soloForma:true},
-      {c:'correo', r:'Correo', tipo:'email', soloForma:true},
-      {c:'telefono', r:'Teléfono', soloForma:true},
       {c:'activo', r:'Activo', tipo:'bool'}
     ],
-    nota:'La lista se ordena por primer apellido. Si dejas vacío ese campo, se toma la segunda palabra del nombre completo. El RFC y los demás datos siguen guardándose; solo no se muestran en la tabla.'
+    nota:'La lista se ordena por el primer apellido, que se toma de la segunda palabra del nombre. El RFC identifica al docente al importar el Excel: no lo borres ni lo cambies a mano.'
   },
   materias:{
     singular:'materia', orden:'semestre',
