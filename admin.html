@@ -853,14 +853,17 @@ async function verCatalogo(tabla){
     <div class="tarjeta">
       <h3>${TITULOS[tabla] || tabla} <span style="font-weight:400;color:var(--texto-suave)">(${filas.length})</span>
         <span class="der">
+          <button class="boton peligro chico oculto" id="btnBorrarSel">Borrar seleccionados</button>
           <button class="boton tenue chico" id="btnExp">Exportar a CSV</button>
           <button class="boton chico" id="btnNuevo">Agregar ${def.singular}</button>
         </span></h3>
       ${filas.length ? `
         <div class="tabla-marco">
           <table class="datos">
-            <thead><tr>${camposTabla.map(c => `<th>${escapar(c.r)}</th>`).join('')}<th></th></tr></thead>
+            <thead><tr><th style="width:40px"><input type="checkbox" id="chkTodos"></th>
+              ${camposTabla.map(c => `<th>${escapar(c.r)}</th>`).join('')}<th></th></tr></thead>
             <tbody>${filas.map(f => `<tr data-id="${f.id}">
+              <td><input type="checkbox" class="chkFila" value="${f.id}"></td>
               ${camposTabla.map(c => `<td>${celdaValor(c,f)}</td>`).join('')}
               <td class="acciones">
                 <button class="boton tenue chico editar">Editar</button>
@@ -881,6 +884,37 @@ async function verCatalogo(tabla){
     irA(tabla);
   });
 
+  // Nombre legible de cada registro, para mostrarlo antes de borrar
+  const etiquetaDe = f => {
+    const primero = camposTabla.find(c => c.tipo !== 'bool');
+    return String(f[primero?.c] ?? f.nombre ?? f.titulo ?? ('registro ' + f.id));
+  };
+
+  const refrescarSeleccion = () => {
+    const n = $$('.chkFila').filter(c => c.checked).length;
+    const b = $('#btnBorrarSel');
+    b.classList.toggle('oculto', n === 0);
+    b.textContent = `Borrar ${n} seleccionado${n === 1 ? '' : 's'}`;
+  };
+
+  const todos = $('#chkTodos');
+  if(todos) todos.addEventListener('change', e => {
+    $$('.chkFila').forEach(c => c.checked = e.target.checked);
+    refrescarSeleccion();
+  });
+
+  $('#vista').addEventListener('change', e => {
+    if(vistaActual !== tabla) return;
+    if(e.target.classList.contains('chkFila')) refrescarSeleccion();
+  });
+
+  $('#btnBorrarSel').addEventListener('click', () => {
+    const ids = $$('.chkFila').filter(c => c.checked).map(c => Number(c.value));
+    if(!ids.length) return;
+    borrarDeCatalogo(tabla, ids, ids.map(id =>
+      etiquetaDe(filas.find(f => f.id === id) || {})), def.singular);
+  });
+
   $('#vista').addEventListener('click', async e => {
     if(vistaActual !== tabla) return;
     const tr = e.target.closest('tr[data-id]'); if(!tr) return;
@@ -888,10 +922,7 @@ async function verCatalogo(tabla){
     const fila = filas.find(f => f.id === id);
     if(e.target.classList.contains('editar')) formulario(tabla, fila);
     if(e.target.classList.contains('borrar')){
-      if(!confirm(`¿Borrar este ${def.singular}? Esta acción no se puede deshacer.`)) return;
-      const res = await api('eliminar', {tabla, id});
-      if(!res.ok){ alert('No se pudo borrar: ' + res.error); return; }
-      await cargarLookups(); irA(tabla);
+      borrarDeCatalogo(tabla, [id], [etiquetaDe(fila || {})], def.singular);
     }
   });
 }
@@ -1068,6 +1099,94 @@ function abrirArchivo(dataUrl, nombre){
   abrirVentana(nombre || 'Adjunto',
     `<img src="${dataUrl}" style="width:100%;border-radius:8px">`,
     [{texto:'Cerrar', clase:'tenue', accion:cerrarVentana}]);
+}
+
+
+/* ==========================================================================
+   BORRADO CON CONFIRMACIÓN ESCRITA
+
+   Un confirm() del navegador se acepta sin leer. Aquí hay que escribir la
+   palabra BORRAR, y antes se muestra exactamente qué se va a eliminar.
+   ========================================================================== */
+
+function confirmarBorrado({titulo, aviso, elementos, alBorrar}){
+  const muestra = elementos.slice(0, 25);
+  const resto = elementos.length - muestra.length;
+
+  abrirVentana(titulo, `
+    <div class="recado mal" style="margin-top:0">
+      ${escapar(aviso)} <b>Esta acción no se puede deshacer.</b>
+    </div>
+
+    <p style="font-size:13.5px;margin-top:16px"><b>Se va a borrar:</b></p>
+    <ul style="margin:8px 0 0 20px;font-size:13.5px;max-height:230px;overflow:auto">
+      ${muestra.map(x => `<li>${escapar(x)}</li>`).join('')}
+      ${resto > 0 ? `<li style="color:var(--texto-suave)">y ${resto} más…</li>` : ''}
+    </ul>
+
+    <div class="campo" style="margin-top:20px;max-width:300px">
+      <label for="txtBorrar">Escribe <b>BORRAR</b> para confirmar</label>
+      <input id="txtBorrar" placeholder="BORRAR" autocomplete="off" spellcheck="false">
+    </div>
+    <div id="recadoBorrado"></div>`,
+    [{texto:'Cancelar', clase:'tenue', accion:cerrarVentana},
+     {texto:`Borrar ${elementos.length}`, clase:'peligro', accion: async ev => {
+        if($('#txtBorrar').value.trim().toUpperCase() !== 'BORRAR'){
+          recado('#recadoBorrado','Escribe la palabra BORRAR para continuar.');
+          return;
+        }
+        ev.target.disabled = true; ev.target.textContent = 'Borrando…';
+        await alBorrar(ev);
+     }}]);
+
+  setTimeout(() => $('#txtBorrar')?.focus(), 100);
+}
+
+/* Borra registros de un catálogo y reporta los que no se pudieron */
+async function borrarDeCatalogo(tabla, ids, etiquetas, singular){
+  confirmarBorrado({
+    titulo: ids.length === 1 ? `Borrar ${singular}` : `Borrar ${ids.length} registros`,
+    aviso: ids.length === 1
+      ? `Vas a borrar este ${singular} del sistema.`
+      : `Vas a borrar ${ids.length} registros del sistema.`,
+    elementos: etiquetas,
+    alBorrar: async ev => {
+      const r = await api('eliminar_lote', {tabla, ids});
+      ev.target.disabled = false; ev.target.textContent = `Borrar ${ids.length}`;
+
+      if(!r.ok){ recado('#recadoBorrado', r.error); return; }
+
+      if(!r.fallos.length){
+        cerrarVentana();
+        await cargarLookups();
+        irA(tabla);
+        return;
+      }
+
+      // Algunos no se pudieron: se explica cuáles y por qué
+      const mapa = new Map(ids.map((id,i) => [id, etiquetas[i]]));
+      $('#ventanaCuerpo').innerHTML = `
+        ${r.borrados ? `<div class="recado bien" style="margin-top:0">
+          Se borraron ${r.borrados}.</div>` : ''}
+        <div class="recado ojo" style="margin-top:12px">
+          ${r.fallos.length} no se pudieron borrar:
+        </div>
+        <div class="tabla-marco" style="margin-top:12px"><table class="datos" style="min-width:0">
+          <thead><tr><th>Registro</th><th>Motivo</th></tr></thead>
+          <tbody>${r.fallos.map(f => `<tr>
+            <td>${escapar(mapa.get(f.id) ?? f.id)}</td>
+            <td style="color:var(--texto-suave);font-size:12.5px">${escapar(f.motivo)}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>
+        <p class="aviso-nota">Una materia con calificaciones capturadas no se puede borrar.
+        Si de verdad sobra, quítala primero de «Materias por grupo».</p>`;
+      $('#ventanaPie').innerHTML = '';
+      const b = document.createElement('button');
+      b.className = 'boton'; b.textContent = 'Entendido';
+      b.addEventListener('click', () => { cerrarVentana(); irA(tabla); });
+      $('#ventanaPie').appendChild(b);
+    }
+  });
 }
 
 /* ==========================================================================
