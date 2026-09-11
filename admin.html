@@ -747,10 +747,9 @@ const CATALOGOS = {
     campos:[
       {c:'semestre', r:'Semestre', tipo:'numero', req:true},
       {c:'nombre', r:'Nombre de la materia', req:true, ancho:'completo'},
-      {c:'carrera_id', r:'Carrera', tipo:'ref', tabla:'carreras', vacio:'Común a todas'},
       {c:'activa', r:'Activa', tipo:'bool'}
     ],
-    nota:'Las materias se crean solas al importar el Excel. Si una asignatura la llevan varias carreras, aparece como común a todas.'
+    nota:'Las materias se crean solas al importar el Excel de calificaciones.'
   },
   grupos:{
     singular:'grupo', orden:'semestre',
