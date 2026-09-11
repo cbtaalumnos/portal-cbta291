@@ -734,9 +734,20 @@ async function verInicio(){
     ? (notas.reduce((s,v) => s + Number(v), 0) / notas.length).toFixed(1) : null;
   const reprobadas = calif.calificaciones.filter(c => c.calificacion_final !== null && Number(c.calificacion_final) < 6).length;
 
-  const porcAsis = asis.resumen?.dias_registrados
-    ? Number(asis.resumen.porcentaje_asistencia) : null;
-  const totales = {faltas: asis.resumen?.faltas ?? 0};
+  const ra = asis.resumen || {};
+  const porcAsis = ra.dias_registrados ? Number(ra.porcentaje_asistencia) : null;
+  const totales = {
+    faltas: ra.faltas ?? 0,
+    justificadas: ra.justificadas ?? 0,
+    retardos: ra.retardos ?? 0
+  };
+
+  // Una inasistencia justificada no baja el porcentaje, pero el alumno sí
+  // faltó ese día y tiene que verlo.
+  const detalleAsis = [];
+  if(totales.faltas)       detalleAsis.push(`${totales.faltas} falta${totales.faltas===1?'':'s'} sin justificar`);
+  if(totales.justificadas) detalleAsis.push(`${totales.justificadas} justificada${totales.justificadas===1?'':'s'}`);
+  if(totales.retardos)     detalleAsis.push(`${totales.retardos} retardo${totales.retardos===1?'':'s'}`);
 
   // Un documento cuenta como pendiente mientras no esté aceptado. Los
   // devueltos con observaciones también faltan: el alumno tiene que subirlos
@@ -760,10 +771,14 @@ async function verInicio(){
         <div class="v">${reprobadas}</div>
         <div class="n">${reprobadas ? 'Acércate con tu docente' : 'Vas al corriente'}</div>
       </div>
-      <div class="medidor ${porcAsis !== null && porcAsis < 80 ? 'alerta' : ''}">
+      <div class="medidor ${porcAsis !== null && porcAsis < 80 ? 'alerta'
+                          : (porcAsis === 100 && !detalleAsis.length ? 'bien' : '')}">
         <div class="r">Asistencia</div>
         <div class="v">${porcAsis !== null ? porcAsis + '%' : '—'}</div>
-        <div class="n">${totales.faltas} falta${totales.faltas===1?'':'s'} sin justificar</div>
+        <div class="n">${
+          porcAsis === null ? 'aún no se registra'
+          : detalleAsis.length ? detalleAsis.join(' · ')
+          : 'sin inasistencias'}</div>
       </div>
       <div class="medidor ${pendientes ? 'alerta' : 'bien'}">
         <div class="r">Documentos pendientes</div>
