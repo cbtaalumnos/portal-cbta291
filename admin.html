@@ -745,17 +745,12 @@ const CATALOGOS = {
   materias:{
     singular:'materia', orden:'semestre',
     campos:[
-      {c:'clave', r:'Clave', req:true, ej:'LEC1'},
       {c:'semestre', r:'Semestre', tipo:'numero', req:true},
       {c:'nombre', r:'Nombre de la materia', req:true, ancho:'completo'},
-      {c:'horas', r:'Horas', tipo:'numero'},
-      {c:'creditos', r:'Créditos', tipo:'numero'},
-      {c:'componente', r:'Componente', tipo:'select',
-       opciones:['FUNDAMENTAL','FUNDAMENTAL_EXTENDIDA','AMPLIADO','LABORAL']},
-      {c:'carrera_id', r:'Carrera', tipo:'ref', tabla:'carreras', vacio:'Tronco común'},
+      {c:'carrera_id', r:'Carrera', tipo:'ref', tabla:'carreras', vacio:'Común a todas'},
       {c:'activa', r:'Activa', tipo:'bool'}
     ],
-    nota:'Las materias se crean solas al importar el Excel. Aquí solo se corrigen nombres o se ajustan horas y créditos.'
+    nota:'Las materias se crean solas al importar el Excel. Si una asignatura la llevan varias carreras, aparece como común a todas.'
   },
   grupos:{
     singular:'grupo', orden:'semestre',
@@ -817,7 +812,11 @@ function etiquetaRef(tabla, id){
 function celdaValor(campo, fila){
   const v = fila[campo.c];
   if(campo.tipo==='bool') return v ? '<span class="sello va">Sí</span>' : '<span class="sello espera">No</span>';
-  if(campo.tipo==='ref') return escapar(etiquetaRef(campo.tabla, v));
+  if(campo.tipo==='ref'){
+    // Sin referencia, se muestra la leyenda del campo en vez de un guion suelto
+    if(!v) return `<span style="color:var(--texto-suave)">${escapar(campo.vacio ?? '—')}</span>`;
+    return escapar(etiquetaRef(campo.tabla, v));
+  }
   if(campo.tipo==='date') return v ? fecha(v) : '—';
   if(campo.tipo==='texto') return escapar(String(v ?? '').slice(0,70) + (String(v??'').length>70?'…':''));
   return escapar(v ?? '—');
