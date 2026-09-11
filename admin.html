@@ -221,6 +221,7 @@ table.datos input.celda:focus{outline:2px solid var(--cian);outline-offset:0;bor
 
       <div class="menu-grupo">Carga de datos</div>
       <button data-vista="importar"><span class="ic">⬆</span> Importar Excel</button>
+      <button data-vista="asistencia"><span class="ic">◧</span> Asistencia</button>
       <button data-vista="respaldo"><span class="ic">⬇</span> Respaldo</button>
       <button data-vista="cierre"><span class="ic">⊘</span> Cierre de ciclo</button>
 
@@ -459,7 +460,7 @@ const TITULOS = {
   reportes:'Reportes', asignaciones:'Materias por grupo',
   horarios:'Horarios', grupos:'Grupos', materias:'Materias', docentes:'Docentes',
   carreras:'Carreras', periodos:'Periodos', avisos:'Avisos',
-  importar:'Importar Excel', respaldo:'Respaldo de datos',
+  importar:'Importar Excel', asistencia:'Asistencia', respaldo:'Respaldo de datos',
   cierre:'Cierre de ciclo', clave:'Mi contraseña'
 };
 
@@ -495,6 +496,7 @@ async function irA(vista){
     else if(vista==='asignaciones')   await verAsignaciones();
     else if(vista==='horarios')       await verHorarios();
     else if(vista==='importar')       verImportar();
+    else if(vista==='asistencia')     await verAsistencia();
     else if(vista==='respaldo')       await verRespaldo();
     else if(vista==='cierre')         await verCierre();
     else if(vista==='avisos')         await verCatalogo('avisos');
@@ -1109,9 +1111,24 @@ function abrirArchivo(dataUrl, nombre){
    palabra BORRAR, y antes se muestra exactamente qué se va a eliminar.
    ========================================================================== */
 
-function confirmarBorrado({titulo, aviso, elementos, alBorrar}){
+const ETIQUETA_DEP = {
+  asignaciones:'asignaciones de materia a grupo',
+  calificaciones:'calificaciones capturadas',
+  asistencias:'registros de asistencia',
+  horarios:'clases en el horario',
+  materias_sin_docente:'materias quedarán sin docente',
+  grupos_sin_tutor:'grupos quedarán sin tutor',
+  alumnos_sin_carrera:'alumnos quedarán sin carrera',
+  grupos_sin_carrera:'grupos quedarán sin carrera'
+};
+
+// Tablas donde tiene sentido arrastrar lo que depende del registro
+const ADMITE_CASCADA = new Set(['materias','docentes','carreras']);
+
+function confirmarBorrado({titulo, aviso, elementos, tabla, ids, alBorrar}){
   const muestra = elementos.slice(0, 25);
   const resto = elementos.length - muestra.length;
+  const puedeCascada = ADMITE_CASCADA.has(tabla);
 
   abrirVentana(titulo, `
     <div class="recado mal" style="margin-top:0">
@@ -1119,10 +1136,22 @@ function confirmarBorrado({titulo, aviso, elementos, alBorrar}){
     </div>
 
     <p style="font-size:13.5px;margin-top:16px"><b>Se va a borrar:</b></p>
-    <ul style="margin:8px 0 0 20px;font-size:13.5px;max-height:230px;overflow:auto">
+    <ul style="margin:8px 0 0 20px;font-size:13.5px;max-height:200px;overflow:auto">
       ${muestra.map(x => `<li>${escapar(x)}</li>`).join('')}
       ${resto > 0 ? `<li style="color:var(--texto-suave)">y ${resto} más…</li>` : ''}
     </ul>
+
+    ${puedeCascada ? `
+      <div style="margin-top:18px;border:1.5px solid var(--linea-fuerte);border-radius:10px;padding:14px 16px">
+        <label style="cursor:pointer;display:block">
+          <input type="checkbox" id="chkCascada">
+          <b style="margin-left:6px">Borrar también lo que depende de estos registros</b>
+        </label>
+        <p style="font-size:13px;color:var(--texto-suave);margin:8px 0 0 24px">
+          Sin esto, no se podrá borrar nada que tenga información asociada.
+        </p>
+        <div id="detalleDep"></div>
+      </div>` : ''}
 
     <div class="campo" style="margin-top:20px;max-width:300px">
       <label for="txtBorrar">Escribe <b>BORRAR</b> para confirmar</label>
@@ -1136,10 +1165,31 @@ function confirmarBorrado({titulo, aviso, elementos, alBorrar}){
           return;
         }
         ev.target.disabled = true; ev.target.textContent = 'Borrando…';
-        await alBorrar(ev);
+        await alBorrar(ev, !!$('#chkCascada')?.checked);
      }}]);
 
   setTimeout(() => $('#txtBorrar')?.focus(), 100);
+
+  // Al marcar la casilla se consulta y se muestra qué se llevaría
+  const chk = $('#chkCascada');
+  if(chk) chk.addEventListener('change', async e => {
+    const caja = $('#detalleDep');
+    if(!e.target.checked){ caja.innerHTML = ''; return; }
+
+    caja.innerHTML = '<div class="cargando" style="padding:10px">Calculando…</div>';
+    const r = await api('dependencias', {tabla, ids});
+    if(!r.ok){ caja.innerHTML = `<div class="recado mal">${escapar(r.error)}</div>`; return; }
+
+    const lineas = Object.entries(r.cuenta).filter(([,n]) => n > 0);
+    caja.innerHTML = lineas.length
+      ? `<div class="recado mal" style="margin-top:12px">
+           <b>Se borrarán además:</b>
+           <ul style="margin:8px 0 0 18px">
+             ${lineas.map(([k,n]) => `<li>${n} ${escapar(ETIQUETA_DEP[k] ?? k)}</li>`).join('')}
+           </ul>
+         </div>`
+      : '<div class="recado bien" style="margin-top:12px">No hay nada asociado a estos registros.</div>';
+  });
 }
 
 /* Borra registros de un catálogo y reporta los que no se pudieron */
@@ -1150,8 +1200,9 @@ async function borrarDeCatalogo(tabla, ids, etiquetas, singular){
       ? `Vas a borrar este ${singular} del sistema.`
       : `Vas a borrar ${ids.length} registros del sistema.`,
     elementos: etiquetas,
-    alBorrar: async ev => {
-      const r = await api('eliminar_lote', {tabla, ids});
+    tabla, ids,
+    alBorrar: async (ev, cascada) => {
+      const r = await api('eliminar_lote', {tabla, ids, cascada});
       ev.target.disabled = false; ev.target.textContent = `Borrar ${ids.length}`;
 
       if(!r.ok){ recado('#recadoBorrado', r.error); return; }
@@ -1178,8 +1229,8 @@ async function borrarDeCatalogo(tabla, ids, etiquetas, singular){
             <td style="color:var(--texto-suave);font-size:12.5px">${escapar(f.motivo)}</td>
           </tr>`).join('')}</tbody>
         </table></div>
-        <p class="aviso-nota">Una materia con calificaciones capturadas no se puede borrar.
-        Si de verdad sobra, quítala primero de «Materias por grupo».</p>`;
+        <p class="aviso-nota">Si querías borrarlas de todos modos, vuelve a intentarlo
+        marcando «Borrar también lo que depende de estos registros».</p>`;
       $('#ventanaPie').innerHTML = '';
       const b = document.createElement('button');
       b.className = 'boton'; b.textContent = 'Entendido';
@@ -2500,6 +2551,272 @@ async function confirmarImportacion(e){
     </div>`;
 
   await cargarLookups();
+}
+
+/* ==========================================================================
+   ASISTENCIA
+
+   El archivo registra la falta del día completo y solo incluye a quien faltó.
+   Quien no aparece, asistió. El enlace con cada alumno se hace por número de
+   control, que viene en la columna ID.
+   ========================================================================== */
+
+const ESTADOS_ASIST = {
+  'AUSENTE':                 {tipo:'FALTA',       motivo:null},
+  'FALTA':                   {tipo:'FALTA',       motivo:null},
+  'RETARDO':                 {tipo:'RETARDO',     motivo:null},
+  'JUSTIFICADO (MEDICA)':    {tipo:'JUSTIFICADA', motivo:'MEDICA'},
+  'JUSTIFICADO (PERSONAL)':  {tipo:'JUSTIFICADA', motivo:'PERSONAL'},
+  'JUSTIFICADO (OTRA)':      {tipo:'JUSTIFICADA', motivo:'OTRA'},
+  'JUSTIFICADA (MEDICA)':    {tipo:'JUSTIFICADA', motivo:'MEDICA'},
+  'JUSTIFICADA (PERSONAL)':  {tipo:'JUSTIFICADA', motivo:'PERSONAL'},
+  'JUSTIFICADA (OTRA)':      {tipo:'JUSTIFICADA', motivo:'OTRA'}
+};
+
+let asistLeida = null, asistFecha = '', asistArchivo = '';
+
+async function verAsistencia(){
+  asistLeida = null;
+
+  const j = await api('listar', {tabla:'jornadas', orden:'fecha', ascendente:false, limite:400});
+  const jornadas = j.ok ? j.datos : [];
+
+  const res = await api('listar', {tabla:'v_resumen_inasistencias', orden:'alumno', limite:2000});
+  const resumen = res.ok ? res.datos : [];
+  const enRiesgo = resumen.filter(x => Number(x.porcentaje_asistencia) < 80 && x.dias_registrados > 0);
+
+  $('#vista').innerHTML = `
+    <div class="tarjeta">
+      <h3>Subir la asistencia de un día</h3>
+      <div class="cuerpo">
+        <p style="font-size:13.5px;color:var(--texto-suave);max-width:68ch">
+          Sube el archivo con las inasistencias del día. Debe traer las columnas
+          <b>ID</b>, <b>Nombre</b>, <b>Fecha</b> y <b>Estado</b>. Solo se registra a
+          quien faltó; quien no aparece se toma como presente.
+        </p>
+        <div class="campo" style="margin-top:18px">
+          <label for="archAsist">Archivo</label>
+          <input id="archAsist" type="file" accept=".csv,.xlsx,.xls,.txt">
+          <p class="pista">Acepta CSV o Excel. Se lee en tu computadora.</p>
+        </div>
+        <div id="recadoAsist"></div>
+      </div>
+    </div>
+    <div id="previaAsist"></div>
+
+    <div class="medidores" style="margin-top:22px">
+      <div class="medidor"><div class="r">Días registrados</div>
+        <div class="v">${jornadas.length}</div></div>
+      <div class="medidor ${enRiesgo.length ? 'alerta':'bien'}">
+        <div class="r">Bajo 80% de asistencia</div>
+        <div class="v">${enRiesgo.length}</div>
+        <div class="n">alumnos</div></div>
+    </div>
+
+    ${enRiesgo.length ? `
+      <div class="tarjeta" style="margin-top:18px">
+        <h3>Alumnos con asistencia baja
+          <span class="der"><button class="boton tenue chico" id="btnExpAsist">Exportar a CSV</button></span></h3>
+        <div class="tabla-marco"><table class="datos">
+          <thead><tr><th>Alumno</th><th>Grupo</th><th class="n">Faltas</th>
+            <th class="n">Justificadas</th><th class="n">Asistencia</th></tr></thead>
+          <tbody>${enRiesgo.sort((a,b) => a.porcentaje_asistencia - b.porcentaje_asistencia)
+            .map(x => `<tr class="franja cae">
+              <td><b>${escapar(x.alumno)}</b>
+                <div style="color:var(--texto-suave);font-size:12px">${escapar(x.matricula)}</div></td>
+              <td>${escapar(x.grupo ?? '—')}</td>
+              <td class="n">${x.faltas}</td>
+              <td class="n">${x.justificadas}</td>
+              <td class="n"><span class="sello cae">${x.porcentaje_asistencia}%</span></td>
+            </tr>`).join('')}</tbody>
+        </table></div>
+      </div>` : ''}
+
+    <div class="tarjeta" style="margin-top:18px">
+      <h3>Días cargados <span style="font-weight:400;color:var(--texto-suave)">(${jornadas.length})</span></h3>
+      ${jornadas.length ? `
+        <div class="tabla-marco"><table class="datos" style="min-width:0">
+          <thead><tr><th>Fecha</th><th>Archivo</th><th>Cargado</th><th></th></tr></thead>
+          <tbody>${jornadas.map(x => `<tr data-fecha="${escapar(x.fecha)}">
+            <td><b>${fecha(x.fecha)}</b></td>
+            <td style="color:var(--texto-suave);font-size:12.5px">${escapar(x.archivo ?? '—')}</td>
+            <td style="color:var(--texto-suave);font-size:12.5px">${
+              x.registrada_en ? new Date(x.registrada_en).toLocaleString('es-MX') : '—'}</td>
+            <td class="acciones"><button class="boton tenue chico borrarJornada">Quitar</button></td>
+          </tr>`).join('')}</tbody>
+        </table></div>`
+        : '<div class="vacio"><div class="g">◧</div><p>Todavía no has cargado ningún día.</p></div>'}
+    </div>`;
+
+  $('#archAsist').addEventListener('change', leerAsistencia);
+
+  const be = $('#btnExpAsist');
+  if(be) be.addEventListener('click', () => exportarCSV('asistencia_baja', enRiesgo,
+    ['matricula','alumno','grupo','dias_registrados','faltas','retardos',
+     'justificadas','porcentaje_asistencia']));
+
+  $('#vista').addEventListener('click', async e => {
+    if(vistaActual !== 'asistencia') return;
+    if(!e.target.classList.contains('borrarJornada')) return;
+    const f = e.target.closest('tr[data-fecha]').dataset.fecha;
+    if(!confirm(`¿Quitar la asistencia del ${f}? Se borran todas las inasistencias de ese día.`)) return;
+    const r = await api('borrar_jornada', {fecha: f});
+    if(!r.ok){ alert(r.error); return; }
+    irA('asistencia');
+  });
+}
+
+function leerAsistencia(e){
+  const f = e.target.files[0];
+  if(!f) return;
+  asistArchivo = f.name;
+  recado('#recadoAsist','Leyendo el archivo…','ojo');
+  $('#previaAsist').innerHTML = '';
+
+  const lector = new FileReader();
+  lector.onload = () => {
+    try {
+      const buffer = lector.result;
+      const primeros = new Uint8Array(buffer.slice(0, 4));
+      let matriz;
+
+      if(primeros[0] === 0x50 && primeros[1] === 0x4B){
+        const libro = XLSX.read(new Uint8Array(buffer), {type:'array'});
+        matriz = XLSX.utils.sheet_to_json(libro.Sheets[libro.SheetNames[0]],
+                                          {header:1, defval:'', raw:true, blankrows:false});
+      } else {
+        matriz = matrizDesdeCSV(decodificarHibrido(buffer));
+      }
+      armarAsistencia(matriz);
+    } catch(err){
+      recado('#recadoAsist','No se pudo leer el archivo: ' + err.message);
+    }
+  };
+  lector.onerror = () => recado('#recadoAsist','No se pudo abrir el archivo.');
+  lector.readAsArrayBuffer(f);
+}
+
+function matrizDesdeCSV(texto){
+  const limpio = texto.replace(/^\uFEFF/, '');
+  const lineas = limpio.split(/\r?\n/).filter(l => l.trim());
+  const sep = lineas[0].includes('\t') ? '\t' : (lineas[0].includes(';') ? ';' : ',');
+  return lineas.map(linea => {
+    const salida = []; let actual = '', comillas = false;
+    for(let i = 0; i < linea.length; i++){
+      const c = linea[i];
+      if(c === '"'){
+        if(comillas && linea[i+1] === '"'){ actual += '"'; i++; }
+        else comillas = !comillas;
+      } else if(c === sep && !comillas){ salida.push(actual); actual = ''; }
+      else actual += c;
+    }
+    salida.push(actual);
+    return salida;
+  });
+}
+
+function armarAsistencia(matriz){
+  if(!matriz || matriz.length < 2) throw new Error('El archivo viene vacío.');
+
+  const enc = matriz[0].map(c => normTxt(c));
+  const iID = enc.indexOf('ID'), iNom = enc.indexOf('NOMBRE');
+  const iFec = enc.indexOf('FECHA'), iEst = enc.indexOf('ESTADO');
+
+  const faltan = [];
+  if(iID < 0)  faltan.push('ID');
+  if(iFec < 0) faltan.push('Fecha');
+  if(iEst < 0) faltan.push('Estado');
+  if(faltan.length){
+    recado('#recadoAsist','Al archivo le faltan estas columnas: ' + faltan.join(', '));
+    return;
+  }
+
+  const filas = [], desconocidos = [], fechas = new Set();
+
+  for(let i = 1; i < matriz.length; i++){
+    const c = matriz[i];
+    if(!c) continue;
+    const id = limpia(c[iID]);
+    if(!id) continue;
+
+    const estadoTxt = normTxt(c[iEst]);
+    if(!estadoTxt || estadoTxt === 'PRESENTE' || estadoTxt === 'ASISTIO') continue;
+
+    const mapeo = ESTADOS_ASIST[estadoTxt];
+    if(!mapeo){ desconocidos.push(limpia(c[iEst])); continue; }
+
+    const f = limpia(c[iFec]).slice(0,10);
+    if(f) fechas.add(f);
+
+    filas.push({id, nombre: iNom >= 0 ? limpia(c[iNom]) : '', ...mapeo});
+  }
+
+  if(!filas.length){ recado('#recadoAsist','No se encontró ninguna inasistencia en el archivo.'); return; }
+  if(fechas.size > 1){
+    recado('#recadoAsist','El archivo tiene varias fechas: ' + [...fechas].join(', ')
+      + '. Sube un archivo por día.');
+    return;
+  }
+
+  asistLeida = filas;
+  asistFecha = [...fechas][0] || '';
+  recado('#recadoAsist','');
+  previaAsistencia(filas, [...new Set(desconocidos)]);
+}
+
+function previaAsistencia(filas, desconocidos){
+  const cuenta = {};
+  filas.forEach(f => {
+    const k = f.tipo === 'JUSTIFICADA' ? `Justificada (${f.motivo.toLowerCase()})`
+            : f.tipo === 'RETARDO' ? 'Retardo' : 'Falta';
+    cuenta[k] = (cuenta[k] || 0) + 1;
+  });
+
+  $('#previaAsist').innerHTML = `
+    <div class="medidores" style="margin-top:20px">
+      <div class="medidor"><div class="r">Fecha</div>
+        <div class="v" style="font-size:19px">${fecha(asistFecha)}</div></div>
+      <div class="medidor alerta"><div class="r">Inasistencias</div>
+        <div class="v">${filas.length}</div></div>
+      ${Object.entries(cuenta).map(([k,n]) =>
+        `<div class="medidor"><div class="r">${escapar(k)}</div><div class="v">${n}</div></div>`).join('')}
+    </div>
+
+    ${desconocidos.length ? `<div class="recado ojo" style="margin-top:16px">
+      No se reconocieron estos estados y se omitirán:
+      <b>${escapar(desconocidos.join(' · '))}</b></div>` : ''}
+
+    <div class="recado ojo" style="margin-top:16px">
+      Si ya habías cargado el ${fecha(asistFecha)}, se reemplaza por completo.
+      Así una falta que después se justificó queda corregida.
+    </div>
+
+    <div style="margin-top:20px;display:flex;gap:10px;flex-wrap:wrap">
+      <button class="boton" id="btnGuardarAsist">Guardar ${filas.length} inasistencias</button>
+      <button class="boton tenue" id="btnCancelarAsist">Cancelar</button>
+    </div>
+    <div id="resultadoAsist"></div>`;
+
+  $('#btnCancelarAsist').addEventListener('click', () => irA('asistencia'));
+  $('#btnGuardarAsist').addEventListener('click', async ev => {
+    ev.target.disabled = true; ev.target.textContent = 'Guardando…';
+    const r = await api('importar_asistencia', {
+      fecha: asistFecha, archivo: asistArchivo, filas: asistLeida, reemplazar: true});
+    ev.target.disabled = false; ev.target.textContent = `Guardar ${asistLeida.length} inasistencias`;
+
+    if(!r.ok){ recado('#resultadoAsist', r.error); return; }
+
+    $('#resultadoAsist').innerHTML = `
+      <div class="recado bien" style="margin-top:16px">
+        Se guardaron ${r.guardadas} inasistencias del ${fecha(r.fecha)}.
+      </div>
+      ${r.total_no_encontrados ? `
+        <div class="recado ojo" style="margin-top:10px">
+          ${r.total_no_encontrados} no se pudieron enlazar con ningún alumno:
+          <br>${escapar(r.no_encontrados.join(' · '))}
+        </div>` : ''}`;
+    setTimeout(() => irA('asistencia'), 2200);
+  });
 }
 
 /* ==========================================================================

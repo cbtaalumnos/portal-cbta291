@@ -734,13 +734,9 @@ async function verInicio(){
     ? (notas.reduce((s,v) => s + Number(v), 0) / notas.length).toFixed(1) : null;
   const reprobadas = calif.calificaciones.filter(c => c.calificacion_final !== null && Number(c.calificacion_final) < 6).length;
 
-  const totales = asis.resumen.reduce((a,r) => {
-    a.clases += Number(r.total_clases||0);
-    a.buenas += Number(r.presentes||0) + Number(r.justificadas||0);
-    a.faltas += Number(r.faltas||0);
-    return a;
-  }, {clases:0, buenas:0, faltas:0});
-  const porcAsis = totales.clases ? Math.round(100*totales.buenas/totales.clases) : null;
+  const porcAsis = asis.resumen?.dias_registrados
+    ? Number(asis.resumen.porcentaje_asistencia) : null;
+  const totales = {faltas: asis.resumen?.faltas ?? 0};
 
   // Un documento cuenta como pendiente mientras no esté aceptado. Los
   // devueltos con observaciones también faltan: el alumno tiene que subirlos
@@ -1190,65 +1186,73 @@ async function verCalificaciones(){
     </p>`;
 }
 
-/* ---- Asistencia ---------------------------------------------------------- */
-async function verAsistencia(){
-  const r = await traer('asistencia');
-  const res = r.resumen;
+/* ---- Asistencia: inasistencias por día ------------------------------------ */
 
-  if(!res.length){
-    $('#vista').innerHTML = '<div class="tarjeta"><div class="vacio"><div class="g">◧</div><p>Aún no hay registros de asistencia.</p></div></div>';
+const SELLO_INASIST = {
+  'Falta':                  'cae',
+  'Retardo':                'ojo',
+  'Justificada (médica)':   'info',
+  'Justificada (personal)': 'info',
+  'Justificada (otra)':     'info'
+};
+
+async function verAsistencia(){
+  const r = await traer('asistencia', true);
+  const res = r.resumen || {};
+  const d = r.detalle || [];
+
+  if(!res.dias_registrados){
+    $('#vista').innerHTML = `<div class="tarjeta"><div class="vacio"><div class="g">◧</div>
+      <p>Todavía no se ha registrado la asistencia de ningún día.</p></div></div>`;
     return;
   }
 
-  const clase = p => p >= 90 ? 'va' : (p >= 80 ? 'riesgo' : 'cae');
+  if(!d.length){
+    $('#vista').innerHTML = `
+      <div class="recado bien" style="margin-top:0">
+        No tienes ninguna inasistencia en los ${res.dias_registrados} días registrados. Sigue así.
+      </div>`;
+    return;
+  }
 
-  const detalle = r.detalle.map(d => `
-    <tr>
-      <td>${fecha(d.fecha)}</td>
-      <td>${escapar(d.grupo_materia?.materias?.nombre ?? '—')}</td>
-      <td><span class="sello ${d.estatus === 'FALTA' ? 'cae' : (d.estatus === 'JUSTIFICADO' ? 'info' : 'ojo')}">${escapar(d.estatus.charAt(0)+d.estatus.slice(1).toLowerCase())}</span></td>
-      <td style="color:var(--texto-suave);font-size:13px">${escapar(d.motivo ?? '')}</td>
-    </tr>`).join('');
+  const primero = d[0];
 
   $('#vista').innerHTML = `
-    <div class="tarjeta">
-      <h3>Asistencia por materia</h3>
+    <div class="medidores" style="margin-top:0">
+      <div class="medidor ${Number(res.porcentaje_asistencia) < 80 ? 'alerta' : 'bien'}">
+        <div class="r">Asistencia</div>
+        <div class="v">${res.porcentaje_asistencia ?? '—'}%</div>
+        <div class="n">de ${res.dias_registrados} días registrados</div></div>
+      <div class="medidor ${res.faltas ? 'alerta' : 'bien'}">
+        <div class="r">Faltas</div><div class="v">${res.faltas ?? 0}</div>
+        <div class="n">sin justificar</div></div>
+      <div class="medidor"><div class="r">Justificadas</div>
+        <div class="v">${res.justificadas ?? 0}</div></div>
+      <div class="medidor"><div class="r">Retardos</div>
+        <div class="v">${res.retardos ?? 0}</div></div>
+    </div>
+
+    <div class="tarjeta" style="margin-top:18px">
+      <h3>Mis inasistencias</h3>
       <div class="tabla-marco">
         <table class="datos">
-          <thead><tr>
-            <th>Materia</th><th class="n">Clases</th><th class="n">Asistí</th>
-            <th class="n">Faltas</th><th class="n">Retardos</th><th class="n">Justificadas</th><th class="n">Porcentaje</th>
-          </tr></thead>
-          <tbody>
-            ${res.map(x => `<tr class="franja ${clase(Number(x.porcentaje))}">
-              <td><b>${escapar(x.materia)}</b>${x.docente ? `<div style="color:var(--texto-suave);font-size:12.5px;margin-top:2px">${escapar(x.docente)}</div>` : ''}</td>
-              <td class="n">${x.total_clases}</td>
-              <td class="n">${x.presentes}</td>
-              <td class="n">${x.faltas}</td>
-              <td class="n">${x.retardos}</td>
-              <td class="n">${x.justificadas}</td>
-              <td class="n"><b>${x.porcentaje}%</b></td>
-            </tr>`).join('')}
-          </tbody>
+          <thead><tr><th>Fecha</th><th>Alumno</th><th>Semestre</th><th>Grupo</th><th>Estado</th></tr></thead>
+          <tbody>${d.map(x => `<tr class="franja ${SELLO_INASIST[x.estado] === 'cae' ? 'cae'
+                                : SELLO_INASIST[x.estado] === 'ojo' ? 'riesgo' : 'va'}">
+            <td style="white-space:nowrap"><b>${fecha(x.fecha)}</b></td>
+            <td>${escapar(x.alumno ?? '')}</td>
+            <td class="n">${x.semestre ?? '—'}</td>
+            <td>${escapar(x.grupo ?? '—')}</td>
+            <td><span class="sello ${SELLO_INASIST[x.estado] || 'espera'}">${escapar(x.estado)}</span>
+              ${x.observaciones ? `<div style="color:var(--texto-suave);font-size:12px;margin-top:2px">${escapar(x.observaciones)}</div>` : ''}</td>
+          </tr>`).join('')}</tbody>
         </table>
       </div>
     </div>
 
-    <div class="tarjeta" style="margin-top:18px">
-      <h3>Faltas y retardos registrados</h3>
-      ${r.detalle.length ? `
-        <div class="tabla-marco">
-          <table class="datos">
-            <thead><tr><th>Fecha</th><th>Materia</th><th>Registro</th><th>Motivo</th></tr></thead>
-            <tbody>${detalle}</tbody>
-          </table>
-        </div>`
-        : '<div class="vacio"><div class="g">◧</div><p>No tienes faltas ni retardos. Sigue así.</p></div>'}
-    </div>
-
     <p style="margin-top:14px;font-size:13px;color:var(--texto-suave);max-width:70ch">
-      Si una falta debería estar justificada, presenta tu comprobante al docente de la
-      materia o en Control Escolar.
+      Solo aparecen los días en que faltaste o llegaste tarde. Si una falta debería
+      estar justificada, presenta tu comprobante en Control Escolar y se corrige aquí.
     </p>`;
 }
 
