@@ -499,6 +499,8 @@ async function irA(vista){
     else if(vista==='asistencia')     await verAsistencia();
     else if(vista==='respaldo')       await verRespaldo();
     else if(vista==='cierre')         await verCierre();
+    else if(vista==='materias')       await verMaterias();
+    else if(vista==='docentes')       await verDocentes();
     else if(vista==='avisos')         await verCatalogo('avisos');
     else if(vista==='clave')          verClave();
     else                              await verCatalogo(vista);
@@ -1562,6 +1564,255 @@ function ventanaImportar(){
           res.omitidos ? 'ojo' : 'bien');
         setTimeout(() => { cerrarVentana(); irA('alumnos'); }, res.omitidos ? 4000 : 1400);
      }}]);
+}
+
+/* ==========================================================================
+   MATERIAS
+
+   Cada especialidad tiene su propia versión de la asignatura, así que en la
+   base hay hasta tres «Inglés III». Aquí se muestran agrupadas: un renglón
+   por materia, con las carreras que la imparten debajo.
+   ========================================================================== */
+
+async function verMaterias(){
+  const r = await api('listar', {tabla:'materias', orden:'semestre', limite:2000});
+  if(!r.ok) throw new Error(r.error);
+
+  const asig = await api('listar', {tabla:'grupo_materia', limite:2000});
+  const porMateria = {};
+  (asig.ok ? asig.datos : []).forEach(a => {
+    (porMateria[a.materia_id] = porMateria[a.materia_id] || []).push(a.grupo_id);
+  });
+
+  // Se juntan las versiones de la misma materia
+  const grupos = new Map();
+  r.datos.forEach(m => {
+    const llave = `${m.semestre}|${normTxt(m.nombre)}`;
+    if(!grupos.has(llave)){
+      grupos.set(llave, {semestre:m.semestre, nombre:m.nombre, ids:[], carreras:[], grupos:new Set()});
+    }
+    const g = grupos.get(llave);
+    g.ids.push(m.id);
+    if(m.carrera_id) g.carreras.push(etiquetaRef('carreras', m.carrera_id));
+    (porMateria[m.id] || []).forEach(x => g.grupos.add(x));
+  });
+
+  const lista = [...grupos.values()].sort((a,b) =>
+    (a.semestre - b.semestre) || cmp(a.nombre, b.nombre));
+
+  $('#vista').innerHTML = `
+    <div class="tarjeta">
+      <h3>Materias <span style="font-weight:400;color:var(--texto-suave)">(${lista.length})</span>
+        <span class="der">
+          <button class="boton peligro chico oculto" id="btnBorrarSel">Borrar seleccionadas</button>
+          <button class="boton tenue chico" id="btnExpMat">Exportar a CSV</button>
+        </span></h3>
+      ${lista.length ? `
+        <div class="tabla-marco"><table class="datos">
+          <thead><tr><th style="width:40px"><input type="checkbox" id="chkTodos"></th>
+            <th class="n">Sem.</th><th>Materia</th><th>Grupos</th><th></th></tr></thead>
+          <tbody>${lista.map((m,i) => `<tr data-i="${i}">
+            <td><input type="checkbox" class="chkFila" value="${i}"></td>
+            <td class="n">${m.semestre}</td>
+            <td><b>${escapar(m.nombre)}</b>
+              ${m.carreras.length ? `<div style="color:var(--texto-suave);font-size:12px;margin-top:3px">${
+                escapar([...new Set(m.carreras)].join(' · '))}</div>` : ''}</td>
+            <td>${[...m.grupos].map(id => escapar(etiquetaRef('grupos', id)))
+                  .sort().map(g => `<span class="sello info" style="margin:1px">${g}</span>`).join(' ')
+                 || '<span style="color:var(--texto-suave);font-size:12.5px">sin asignar</span>'}</td>
+            <td class="acciones">
+              <button class="boton tenue chico renombrar">Renombrar</button>
+              <button class="boton tenue chico borrar">Borrar</button>
+            </td></tr>`).join('')}</tbody>
+        </table></div>`
+        : '<div class="vacio"><div class="g">▩</div><p>No hay materias. Importa el Excel de calificaciones.</p></div>'}
+    </div>
+    <p class="aviso-nota">Las materias se crean solas al importar el Excel. Al renombrar
+    o borrar, la acción aplica a todas las especialidades que comparten ese nombre.</p>`;
+
+  $('#btnExpMat').addEventListener('click', () => exportarCSV('materias', lista.map(m => ({
+    semestre: m.semestre, materia: m.nombre,
+    carreras: [...new Set(m.carreras)].join(' · '),
+    grupos: [...m.grupos].map(id => etiquetaRef('grupos', id)).sort().join(' ')
+  }))));
+
+  const refrescar = () => {
+    const n = $$('.chkFila').filter(c => c.checked).length;
+    const b = $('#btnBorrarSel');
+    b.classList.toggle('oculto', n === 0);
+    b.textContent = `Borrar ${n} materia${n === 1 ? '' : 's'}`;
+  };
+  $('#chkTodos').addEventListener('change', e => {
+    $$('.chkFila').forEach(c => c.checked = e.target.checked); refrescar();
+  });
+  $('#vista').addEventListener('change', e => {
+    if(vistaActual !== 'materias') return;
+    if(e.target.classList.contains('chkFila')) refrescar();
+  });
+
+  $('#btnBorrarSel').addEventListener('click', () => {
+    const sel = $$('.chkFila').filter(c => c.checked).map(c => lista[Number(c.value)]);
+    borrarDeCatalogo('materias', sel.flatMap(m => m.ids),
+      sel.flatMap(m => m.ids.map(() => `${m.semestre}° ${m.nombre}`)), 'materia');
+  });
+
+  $('#vista').addEventListener('click', async e => {
+    if(vistaActual !== 'materias') return;
+    const tr = e.target.closest('tr[data-i]'); if(!tr) return;
+    const m = lista[Number(tr.dataset.i)];
+
+    if(e.target.classList.contains('borrar')){
+      borrarDeCatalogo('materias', m.ids,
+        m.ids.map(() => `${m.semestre}° ${m.nombre}`), 'materia');
+    }
+
+    if(e.target.classList.contains('renombrar')){
+      abrirVentana('Renombrar materia', `
+        <p style="font-size:13.5px;color:var(--texto-suave);margin-bottom:14px">
+          El nombre se cambia en ${m.ids.length === 1 ? 'esta materia'
+            : `las ${m.ids.length} especialidades que la imparten`}.
+        </p>
+        <div class="campo">
+          <label for="nvoNombre">Nombre</label>
+          <input id="nvoNombre" value="${escapar(m.nombre)}">
+        </div>
+        <div id="recadoRen"></div>`,
+        [{texto:'Cancelar', clase:'tenue', accion:cerrarVentana},
+         {texto:'Guardar', accion: async ev => {
+            const nombre = $('#nvoNombre').value.trim();
+            if(!nombre){ recado('#recadoRen','Escribe el nombre.'); return; }
+            ev.target.disabled = true; ev.target.textContent = 'Guardando…';
+            for(const id of m.ids){
+              const res = await api('actualizar', {tabla:'materias', id, cambios:{nombre}});
+              if(!res.ok){ recado('#recadoRen', res.error); ev.target.disabled = false;
+                           ev.target.textContent = 'Guardar'; return; }
+            }
+            cerrarVentana(); await cargarLookups(); irA('materias');
+         }}]);
+    }
+  });
+}
+
+/* ==========================================================================
+   DOCENTES  ·  con su carga académica
+   ========================================================================== */
+
+async function verDocentes(){
+  const r = await api('listar', {tabla:'docentes', orden:'nombre_completo', limite:1000});
+  if(!r.ok) throw new Error(r.error);
+  const docentes = ordenar('docentes', r.datos);
+
+  const asig = await api('listar', {tabla:'grupo_materia', limite:2000});
+  const carga = {};
+  (asig.ok ? asig.datos : []).forEach(a => {
+    if(!a.docente_id) return;
+    (carga[a.docente_id] = carga[a.docente_id] || []).push(a);
+  });
+
+  const sinDocente = (asig.ok ? asig.datos : []).filter(a => !a.docente_id).length;
+
+  $('#vista').innerHTML = `
+    ${sinDocente ? `<div class="recado ojo" style="margin-top:0">
+      ${sinDocente} materias de grupo están sin docente asignado. Se corrigen desde
+      «Materias por grupo» o al importar el Excel cuando la SEP las capture.</div>` : ''}
+
+    <div class="tarjeta" style="margin-top:${sinDocente ? '18px' : '0'}">
+      <h3>Docentes <span style="font-weight:400;color:var(--texto-suave)">(${docentes.length})</span>
+        <span class="der">
+          <button class="boton peligro chico oculto" id="btnBorrarSel">Borrar seleccionados</button>
+          <button class="boton tenue chico" id="btnExpDoc">Exportar a CSV</button>
+          <button class="boton chico" id="btnNuevo">Agregar docente</button>
+        </span></h3>
+      ${docentes.length ? `
+        <div class="tabla-marco"><table class="datos">
+          <thead><tr><th style="width:40px"><input type="checkbox" id="chkTodos"></th>
+            <th>Nombre completo</th><th class="n">Materias</th><th>Grupos</th>
+            <th>Activo</th><th></th></tr></thead>
+          <tbody>${docentes.map(d => {
+            const suya = carga[d.id] || [];
+            const gs = [...new Set(suya.map(a => etiquetaRef('grupos', a.grupo_id)))].sort();
+            return `<tr data-id="${d.id}">
+              <td><input type="checkbox" class="chkFila" value="${d.id}"></td>
+              <td><b>${escapar(d.nombre_completo)}</b></td>
+              <td class="n">${suya.length || '—'}</td>
+              <td>${gs.map(g => `<span class="sello info" style="margin:1px">${escapar(g)}</span>`).join(' ')
+                   || '<span style="color:var(--texto-suave);font-size:12.5px">sin grupos</span>'}</td>
+              <td>${d.activo ? '<span class="sello va">Sí</span>' : '<span class="sello espera">No</span>'}</td>
+              <td class="acciones">
+                <button class="boton tenue chico carga">Ver carga</button>
+                <button class="boton tenue chico editar">Editar</button>
+                <button class="boton tenue chico borrar">Borrar</button>
+              </td></tr>`;
+          }).join('')}</tbody>
+        </table></div>`
+        : '<div class="vacio"><div class="g">◉</div><p>No hay docentes. Importa el Excel de calificaciones.</p></div>'}
+    </div>`;
+
+  $('#btnNuevo').addEventListener('click', () => formulario('docentes', null));
+  $('#btnExpDoc').addEventListener('click', () => exportarCSV('docentes', docentes.map(d => {
+    const suya = carga[d.id] || [];
+    return {
+      docente: d.nombre_completo, rfc: d.rfc ?? '',
+      materias_asignadas: suya.length,
+      grupos: [...new Set(suya.map(a => etiquetaRef('grupos', a.grupo_id)))].sort().join(' '),
+      detalle: suya.map(a => `${etiquetaRef('grupos', a.grupo_id)}: ${
+        buscaEn('materias', a.materia_id)?.nombre ?? ''}`).join(' | ')
+    };
+  })));
+
+  const refrescar = () => {
+    const n = $$('.chkFila').filter(c => c.checked).length;
+    const b = $('#btnBorrarSel');
+    b.classList.toggle('oculto', n === 0);
+    b.textContent = `Borrar ${n} docente${n === 1 ? '' : 's'}`;
+  };
+  $('#chkTodos').addEventListener('change', e => {
+    $$('.chkFila').forEach(c => c.checked = e.target.checked); refrescar();
+  });
+  $('#vista').addEventListener('change', e => {
+    if(vistaActual !== 'docentes') return;
+    if(e.target.classList.contains('chkFila')) refrescar();
+  });
+  $('#btnBorrarSel').addEventListener('click', () => {
+    const ids = $$('.chkFila').filter(c => c.checked).map(c => Number(c.value));
+    borrarDeCatalogo('docentes', ids,
+      ids.map(id => docentes.find(d => d.id === id)?.nombre_completo ?? id), 'docente');
+  });
+
+  $('#vista').addEventListener('click', async e => {
+    if(vistaActual !== 'docentes') return;
+    const tr = e.target.closest('tr[data-id]'); if(!tr) return;
+    const id = Number(tr.dataset.id);
+    const d = docentes.find(x => x.id === id);
+
+    if(e.target.classList.contains('editar')) formulario('docentes', d);
+    if(e.target.classList.contains('borrar'))
+      borrarDeCatalogo('docentes', [id], [d?.nombre_completo ?? id], 'docente');
+
+    if(e.target.classList.contains('carga')){
+      const suya = (carga[id] || []).map(a => ({
+        grupo: etiquetaRef('grupos', a.grupo_id),
+        materia: buscaEn('materias', a.materia_id)?.nombre ?? '—',
+        semestre: buscaEn('materias', a.materia_id)?.semestre ?? ''
+      })).sort((x,y) => cmp(x.grupo, y.grupo) || cmp(x.materia, y.materia));
+
+      abrirVentana(d?.nombre_completo ?? 'Carga académica',
+        suya.length ? `
+          <p style="font-size:13.5px;color:var(--texto-suave);margin-bottom:14px">
+            Imparte ${suya.length} materia${suya.length === 1 ? '' : 's'} en
+            ${new Set(suya.map(x => x.grupo)).size} grupo${
+              new Set(suya.map(x => x.grupo)).size === 1 ? '' : 's'}.
+          </p>
+          <div class="tabla-marco"><table class="datos" style="min-width:0">
+            <thead><tr><th>Grupo</th><th>Materia</th></tr></thead>
+            <tbody>${suya.map(x => `<tr>
+              <td><b>${escapar(x.grupo)}</b></td>
+              <td>${escapar(x.materia)}</td></tr>`).join('')}</tbody>
+          </table></div>`
+        : '<div class="vacio"><p>Este docente no tiene materias asignadas.</p></div>',
+        [{texto:'Cerrar', clase:'tenue', accion:cerrarVentana}]);
+    }
+  });
 }
 
 /* ==========================================================================
