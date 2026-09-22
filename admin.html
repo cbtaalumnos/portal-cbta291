@@ -1404,29 +1404,93 @@ async function verFicha(id){
   if(!r.ok){ $('#ventanaCuerpo').innerHTML = `<div class="recado mal">${escapar(r.error)}</div>`; return; }
 
   const a = r.alumno;
-  const par = (rr,v) => `<div class="par"><span>${escapar(rr)}</span><b>${escapar(v ?? '—')}</b></div>`;
+  const par = (rr,v) => `<div class="par"><span>${escapar(rr)}</span><b>${
+    (v === null || v === undefined || v === '') ? '—' : escapar(v)}</b></div>`;
+  const sn = v => v === true ? 'Sí' : v === false ? 'No' : null;
+  const bloque = (titulo, contenido) =>
+    `<h4 style="font-size:13px;color:var(--verde);margin:18px 0 10px;letter-spacing:.02em">${escapar(titulo)}</h4>
+     <div class="pares">${contenido}</div>`;
+
+  const tutor = (r.familia || []).find(f => f.parentesco === 'TUTOR');
+  const salud = r.salud;
+  const ra = r.resumen_asistencia || {};
 
   $('#ventanaTitulo').textContent = `${a.apellido_paterno} ${a.apellido_materno ?? ''} ${a.nombres}`;
   $('#ventanaCuerpo').innerHTML = `
+    ${!a.datos_completos ? `<div class="recado ojo" style="margin-top:0">
+      Este alumno todavía no completa su registro en el portal.</div>` : ''}
+
     <div class="pestanas" id="tabsFicha">
       <button data-t="g" class="activo">Generales</button>
+      <button data-t="t">Tutor</button>
+      <button data-t="s">Salud</button>
       <button data-t="c">Calificaciones</button>
       <button data-t="a">Asistencia</button>
       <button data-t="d">Documentos</button>
-      <button data-t="f">Familia</button>
     </div>
 
-    <div id="ft_g"><div class="pares">
-      ${par('Matrícula', a.matricula)} ${par('CURP', a.curp)}
-      ${par('Grupo', a.grupos ? nombreGrupo(a.grupos) : '—')}
-      ${par('Carrera', a.carreras?.nombre)}
-      ${par('Situación', a.estatus)} ${par('Nacimiento', fecha(a.fecha_nacimiento))}
-      ${par('Sexo', a.sexo)} ${par('Tipo de sangre', a.tipo_sangre)}
-      ${par('Celular', a.celular)} ${par('Correo', a.correo_personal)}
-      ${par('Domicilio', a.domicilio)} ${par('Localidad', a.localidad)}
-      ${par('Escuela de procedencia', a.escuela_procedencia)}
-      ${par('Promedio de secundaria', a.promedio_secundaria)}
-    </div></div>
+    <div id="ft_g">
+      ${bloque('Escolares', `
+        ${par('Matrícula', a.matricula)}
+        ${par('CURP', a.curp)}
+        ${par('Grupo', a.grupos ? nombreGrupo(a.grupos) : null)}
+        ${par('Carrera', a.carreras?.nombre)}
+        ${par('Generación', a.generacion)}
+        ${par('Situación', a.estatus)}
+        ${par('Fecha de ingreso', a.fecha_ingreso ? fecha(a.fecha_ingreso) : null)}
+        ${par('Correo institucional', a.correo_institucional)}`)}
+
+      ${bloque('Personales', `
+        ${par('Fecha de nacimiento', a.fecha_nacimiento ? fecha(a.fecha_nacimiento) : null)}
+        ${par('Sexo', a.sexo)}
+        ${par('Tipo de sangre', a.tipo_sangre)}
+        ${par('Estado donde nació', a.lugar_nacimiento)}
+        ${par('Nacionalidad', a.nacionalidad)}`)}
+
+      ${bloque('Contacto y domicilio', `
+        ${par('Celular', a.celular)}
+        ${par('Correo personal', a.correo_personal)}
+        ${par('Domicilio', a.domicilio)}
+        ${par('Colonia', a.colonia)}
+        ${par('Código postal', a.codigo_postal)}
+        ${par('Localidad', a.localidad)}
+        ${par('Municipio', a.municipio)}`)}
+
+      ${bloque('Procedencia', `
+        ${par('Escuela de procedencia', a.escuela_procedencia)}
+        ${par('Promedio de secundaria', a.promedio_secundaria)}`)}
+    </div>
+
+    <div id="ft_t" class="oculto">
+      ${tutor ? bloque('Tutor o responsable', `
+        ${par('Nombre', tutor.nombre)}
+        ${par('Celular', tutor.celular)}
+        ${par('Otro teléfono', tutor.telefono)}
+        ${par('Correo', tutor.correo)}
+        ${par('Ocupación', tutor.ocupacion)}
+        ${par('Escolaridad', tutor.escolaridad)}
+        ${par('Vive con el alumno', sn(tutor.vive_con_alumno))}`)
+        : '<div class="vacio"><p>El alumno no ha registrado a su tutor.</p></div>'}
+    </div>
+
+    <div id="ft_s" class="oculto">
+      ${salud ? `
+        ${salud.alergias || salud.enfermedades || salud.medicamentos || salud.discapacidad
+          ? `<div class="recado ojo" style="margin-top:0">Este alumno reportó información médica relevante.</div>` : ''}
+        ${bloque('Información médica', `
+          ${par('Alergias', salud.alergias)}
+          ${par('Enfermedades', salud.enfermedades)}
+          ${par('Medicamentos', salud.medicamentos)}
+          ${par('Discapacidad', salud.discapacidad)}`)}
+        ${bloque('Seguro y emergencias', `
+          ${par('Número de seguro social', salud.numero_seguro)}
+          ${par('Institución', salud.institucion)}
+          ${par('Contacto de emergencia', salud.contacto_emergencia_nombre)}
+          ${par('Teléfono de emergencia', salud.contacto_emergencia_telefono)}
+          ${par('Autoriza atención médica', sn(salud.autorizo_atencion))}`)}
+        ${salud.observaciones ? bloque('Observaciones', par('Lo que el alumno agregó', salud.observaciones)) : ''}`
+        : '<div class="vacio"><p>El alumno no ha registrado datos de salud.</p></div>'}
+    </div>
 
     <div id="ft_c" class="oculto">${r.calificaciones.length ? `
       <div class="tabla-marco"><table class="datos" style="min-width:0">
@@ -1437,13 +1501,26 @@ async function verFicha(id){
         </tbody></table></div>`
       : '<div class="vacio"><p>Sin calificaciones capturadas.</p></div>'}</div>
 
-    <div id="ft_a" class="oculto">${r.asistencia.length ? `
-      <div class="tabla-marco"><table class="datos" style="min-width:0">
-        <thead><tr><th>Materia</th><th class="n">Clases</th><th class="n">Faltas</th><th class="n">%</th></tr></thead>
-        <tbody>${r.asistencia.map(x => `<tr><td>${escapar(x.materia)}</td>
-          <td class="n">${x.total_clases}</td><td class="n">${x.faltas}</td>
-          <td class="n"><b>${x.porcentaje}%</b></td></tr>`).join('')}</tbody></table></div>`
-      : '<div class="vacio"><p>Sin registros de asistencia.</p></div>'}</div>
+    <div id="ft_a" class="oculto">
+      ${ra.dias_registrados ? `
+        <div class="pares" style="margin-bottom:14px">
+          ${par('Asistencia', (ra.porcentaje_asistencia ?? '—') + '%')}
+          ${par('Días registrados', ra.dias_registrados)}
+          ${par('Faltas', ra.faltas)}
+          ${par('Justificadas', ra.justificadas)}
+          ${par('Retardos', ra.retardos)}
+        </div>` : ''}
+      ${(r.inasistencias||[]).length ? `
+        <div class="tabla-marco"><table class="datos" style="min-width:0">
+          <thead><tr><th>Fecha</th><th>Estado</th></tr></thead>
+          <tbody>${r.inasistencias.map(x => `<tr>
+            <td>${fecha(x.fecha)}</td>
+            <td><span class="sello ${x.tipo === 'FALTA' ? 'cae' : x.tipo === 'RETARDO' ? 'ojo' : 'info'}">${
+              escapar(x.estado)}</span></td></tr>`).join('')}</tbody>
+        </table></div>`
+        : `<div class="vacio"><p>${ra.dias_registrados
+            ? 'Sin inasistencias en los días registrados.' : 'Todavía no se carga ningún día de asistencia.'}</p></div>`}
+    </div>
 
     <div id="ft_d" class="oculto">
       <p style="font-size:13px;color:var(--texto-suave);margin-bottom:12px">
@@ -1471,12 +1548,7 @@ async function verFicha(id){
           </tr>`;
         }).join('')}</tbody>
       </table></div>
-    </div>
-
-    <div id="ft_f" class="oculto">${r.familia.length ? `
-      <div class="pares">${r.familia.map(f =>
-        par(f.parentesco.charAt(0)+f.parentesco.slice(1).toLowerCase(), `${f.nombre} · ${f.telefono ?? f.celular ?? 'sin teléfono'}`)).join('')}</div>`
-      : '<div class="vacio"><p>Sin datos de familia registrados.</p></div>'}</div>`;
+    </div>`;
 
   $('#ventanaPie').innerHTML = '';
   const cerrar = document.createElement('button');
@@ -1487,16 +1559,13 @@ async function verFicha(id){
   $('#tabsFicha').addEventListener('click', e => {
     const b = e.target.closest('button[data-t]'); if(!b) return;
     $$('#tabsFicha button').forEach(x => x.classList.toggle('activo', x===b));
-    ['g','c','a','d','f'].forEach(t => $('#ft_'+t).classList.toggle('oculto', t !== b.dataset.t));
+    ['g','t','s','c','a','d'].forEach(t => $('#ft_'+t).classList.toggle('oculto', t !== b.dataset.t));
   });
 
-  // Abrir un documento desde la ficha. Reemplaza el contenido de la misma
-  // ventana; al cerrar la revisión se vuelve a la ficha.
   $('#ventanaCuerpo').addEventListener('click', e => {
     const b = e.target.closest('.abrirDocFicha');
     if(b) revisarDocumento(Number(b.dataset.reg), () => verFicha(id));
   });
-
 }
 
 /* ---- Importar alumnos desde CSV / Excel ---------------------------------- */

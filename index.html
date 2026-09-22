@@ -1024,8 +1024,15 @@ async function verDatos(){
   $('#btnContacto').addEventListener('click', async () => {
     const b = $('#btnContacto');
     b.disabled = true; b.textContent = 'Guardando…';
+    const datosPers = leerCamposPersonales();
+    const errNac = revisarNacimiento(datosPers.fecha_nacimiento);
+    if(errNac){
+      b.disabled = false; b.textContent = 'Guardar cambios';
+      recado('#recadoContacto', errNac);
+      return;
+    }
     const r = await llamar('portal-alumno', {
-      accion:'actualizar_contacto', token:sesion.token, ...leerCamposPersonales()
+      accion:'actualizar_contacto', token:sesion.token, ...datosPers
     });
     b.disabled = false; b.textContent = 'Guardar cambios';
     delete cache['perfil'];
@@ -1476,7 +1483,8 @@ function camposPersonales(a){
          o === '' ? '— elegir —' : escapar(o)}</option>`).join('')}</select></div>`;
 
   return `<div class="pares">
-    ${t('edNacimiento','Fecha de nacimiento', a.fecha_nacimiento, 'date', true)}
+    ${t('edNacimiento','Fecha de nacimiento', a.fecha_nacimiento, 'date', true)
+        .replace('type="date"', `type="date" min="${new Date().getFullYear()-30}-01-01" max="${new Date().getFullYear()-12}-12-31"`)}
     ${sel('edSexo','Sexo', a.sexo, ['','MASCULINO','FEMENINO','OTRO'], true)}
     ${sel('edSangre','Tipo de sangre', a.tipo_sangre, SANGRE)}
     ${sel('edEstadoNac','Estado donde naciste', a.lugar_nacimiento, [''].concat(ESTADOS_MX))}
@@ -1489,6 +1497,22 @@ function camposPersonales(a){
     ${t('edCP','Código postal', a.codigo_postal)}
     ${t('edLocalidad','Localidad', a.localidad)}
   </div>`;
+}
+
+/* Un alumno de bachillerato tiene entre 12 y 30 años. Fuera de ese rango casi
+   siempre es un error al capturar: el año actual en vez del de nacimiento. */
+function revisarNacimiento(fechaTxt){
+  if(!fechaTxt) return null;
+  const f = new Date(fechaTxt + 'T12:00:00');
+  if(isNaN(f)) return 'La fecha de nacimiento no es válida.';
+  const hoy = new Date();
+  if(f > hoy) return 'La fecha de nacimiento no puede ser una fecha futura.';
+  let edad = hoy.getFullYear() - f.getFullYear();
+  const m = hoy.getMonth() - f.getMonth();
+  if(m < 0 || (m === 0 && hoy.getDate() < f.getDate())) edad--;
+  if(edad < 12 || edad > 30)
+    return `Con esa fecha tendrías ${edad} años. Revisa el año de nacimiento.`;
+  return null;
 }
 
 function leerCamposPersonales(){
@@ -1570,6 +1594,12 @@ async function verRegistroInicial(){
 
   $('#btnRegistro').addEventListener('click', async ev => {
     const datos = leerCamposPersonales();
+    const errNac = revisarNacimiento(datos.fecha_nacimiento);
+    if(errNac){
+      recado('#recadoRegistro', errNac);
+      window.scrollTo(0, 0);
+      return;
+    }
     const faltan = [];
     if(!datos.fecha_nacimiento) faltan.push('fecha de nacimiento');
     if(!datos.sexo) faltan.push('sexo');
