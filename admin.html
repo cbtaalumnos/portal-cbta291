@@ -597,7 +597,7 @@ async function verTablero(){
     <h3 style="font-size:15px;margin:26px 0 12px">Por grupo</h3>
     <div class="tarjeta">
       <h3>Comparativo
-        <span class="der"><button class="boton tenue chico" id="btnExpGrupos">Exportar a CSV</button></span></h3>
+        <span class="der"><button class="boton tenue chico" id="btnExpGrupos">Exportar a Excel</button></span></h3>
       ${grupos.length ? `
         <div class="tabla-marco"><table class="datos">
           <thead><tr>
@@ -658,7 +658,7 @@ async function verTablero(){
       <h3>Con tres o más materias reprobadas
         <span style="font-weight:400;color:var(--texto-suave)">(${(r.alumnos_en_riesgo||[]).length})</span>
         <span class="der">${(r.alumnos_en_riesgo||[]).length
-          ? '<button class="boton tenue chico" id="btnExpRiesgo">Exportar a CSV</button>' : ''}</span></h3>
+          ? '<button class="boton tenue chico" id="btnExpRiesgo">Exportar a Excel</button>' : ''}</span></h3>
       ${(r.alumnos_en_riesgo||[]).length ? `
         <div class="tabla-marco"><table class="datos">
           <thead><tr><th>Alumno</th><th>Grupo</th><th class="n">Reprobadas</th>
@@ -696,18 +696,49 @@ async function verTablero(){
 /* ==========================================================================
    EXPORTAR A CSV (se abre directo en Excel)
    ========================================================================== */
+/* Exporta a Excel de verdad (.xlsx). Antes se generaba un CSV con punto y
+   coma, y Excel lo abría en una sola columna cuando su separador de lista
+   era la coma. Con .xlsx no hay separador que adivinar ni acentos que se
+   rompan. Si por alguna razón la librería no cargó, cae a CSV. */
 function exportarCSV(nombre, filas, columnas){
   if(!filas || !filas.length){ alert('No hay datos que exportar.'); return; }
   const cols = columnas || Object.keys(filas[0]);
+  const hoy = new Date().toISOString().slice(0,10);
+
+  const encabezado = cols.map(c =>
+    c.replace(/_/g,' ').replace(/^./, m => m.toUpperCase()));
+
+  const matriz = [encabezado].concat(filas.map(f => cols.map(c => {
+    const v = f[c];
+    if(v === null || v === undefined) return '';
+    if(typeof v === 'boolean') return v ? 'Sí' : 'No';
+    return v;
+  })));
+
+  if(typeof XLSX !== 'undefined'){
+    const hoja = XLSX.utils.aoa_to_sheet(matriz);
+
+    // Ancho de columna según el contenido, para que no salga todo aplastado
+    hoja['!cols'] = cols.map((c,i) => ({
+      wch: Math.min(48, Math.max(10, ...matriz.map(r => String(r[i] ?? '').length + 2)))
+    }));
+
+    const libro = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(libro, hoja, nombre.slice(0,28) || 'Datos');
+    XLSX.writeFile(libro, `${nombre}_${hoy}.xlsx`);
+    return;
+  }
+
+  // Respaldo en CSV. La primera línea le dice a Excel cuál es el separador.
   const esc = v => {
-    const s = (v===null||v===undefined) ? '' : String(v);
-    return /[",;\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+    const t = String(v ?? '');
+    return /[",;\n]/.test(t) ? '"' + t.replace(/"/g,'""') + '"' : t;
   };
-  const csv = [cols.join(';')].concat(filas.map(f => cols.map(c => esc(f[c])).join(';'))).join('\r\n');
+  const csv = 'sep=;\r\n' + matriz.map(r => r.map(esc).join(';')).join('\r\n');
   const blob = new Blob(['\uFEFF' + csv], {type:'text/csv;charset=utf-8;'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `${nombre}_${new Date().toISOString().slice(0,10)}.csv`;
+  a.download = `${nombre}_${hoy}.csv`;
   a.click();
   URL.revokeObjectURL(a.href);
 }
@@ -856,7 +887,7 @@ async function verCatalogo(tabla){
       <h3>${TITULOS[tabla] || tabla} <span style="font-weight:400;color:var(--texto-suave)">(${filas.length})</span>
         <span class="der">
           <button class="boton peligro chico oculto" id="btnBorrarSel">Borrar seleccionados</button>
-          <button class="boton tenue chico" id="btnExp">Exportar a CSV</button>
+          <button class="boton tenue chico" id="btnExp">Exportar a Excel</button>
           <button class="boton chico" id="btnNuevo">Agregar ${def.singular}</button>
         </span></h3>
       ${filas.length ? `
@@ -1308,7 +1339,7 @@ async function verAlumnos(){
 
     <div class="tarjeta">
       <h3>Alumnos <span style="font-weight:400;color:var(--texto-suave)">(${filas.length})</span>
-        <span class="der"><button class="boton tenue chico" id="btnExpAl">Exportar a CSV</button></span></h3>
+        <span class="der"><button class="boton tenue chico" id="btnExpAl">Exportar a Excel</button></span></h3>
       ${filas.length ? `
         <div class="tabla-marco">
           <table class="datos">
@@ -1674,7 +1705,7 @@ async function verMaterias(){
       <h3>Materias <span style="font-weight:400;color:var(--texto-suave)">(${lista.length})</span>
         <span class="der">
           <button class="boton peligro chico oculto" id="btnBorrarSel">Borrar seleccionadas</button>
-          <button class="boton tenue chico" id="btnExpMat">Exportar a CSV</button>
+          <button class="boton tenue chico" id="btnExpMat">Exportar a Excel</button>
         </span></h3>
       ${lista.length ? `
         <div class="tabla-marco"><table class="datos">
@@ -1789,7 +1820,7 @@ async function verDocentes(){
       <h3>Docentes <span style="font-weight:400;color:var(--texto-suave)">(${docentes.length})</span>
         <span class="der">
           <button class="boton peligro chico oculto" id="btnBorrarSel">Borrar seleccionados</button>
-          <button class="boton tenue chico" id="btnExpDoc">Exportar a CSV</button>
+          <button class="boton tenue chico" id="btnExpDoc">Exportar a Excel</button>
           <button class="boton chico" id="btnNuevo">Agregar docente</button>
         </span></h3>
       ${docentes.length ? `
@@ -2166,7 +2197,7 @@ async function verDocumentos(){
     <div class="tarjeta" style="margin-top:20px">
       <h3>Expedientes
         <span style="font-weight:400;color:var(--texto-suave)">(${alumnos.length} alumnos)</span>
-        <span class="der"><button class="boton tenue chico" id="btnExpDocs">Exportar a CSV</button></span></h3>
+        <span class="der"><button class="boton tenue chico" id="btnExpDocs">Exportar a Excel</button></span></h3>
       ${alumnos.length ? `
         <div class="tabla-marco"><table class="datos">
           <thead><tr><th>Alumno</th><th>Grupo</th>
@@ -2322,7 +2353,7 @@ async function verReportes(){
             filtroReportes.tipo===t?' selected':''}>${ETIQ_REPORTE[t]}</option>`).join('')}
         </select>
       </div>
-      <button class="boton tenue" id="btnExpRep">Exportar a CSV</button>
+      <button class="boton tenue" id="btnExpRep">Exportar a Excel</button>
       <button class="boton" id="btnNuevoRep">Levantar reporte</button>
     </div>
 
@@ -2934,7 +2965,7 @@ async function verAsistencia(){
     ${enRiesgo.length ? `
       <div class="tarjeta" style="margin-top:18px">
         <h3>Alumnos con asistencia baja
-          <span class="der"><button class="boton tenue chico" id="btnExpAsist">Exportar a CSV</button></span></h3>
+          <span class="der"><button class="boton tenue chico" id="btnExpAsist">Exportar a Excel</button></span></h3>
         <div class="tabla-marco"><table class="datos">
           <thead><tr><th>Alumno</th><th>Grupo</th><th class="n">Faltas</th>
             <th class="n">Justificadas</th><th class="n">Asistencia</th></tr></thead>
@@ -3391,7 +3422,7 @@ async function verRespaldo(){
 
       // Lista de contenido dentro del propio ZIP
       const cols = ['grupo','matricula','alumno','documento','estado','peso_kb','subido_en'];
-      const csv = [cols.join(';')].concat(lista.map(f =>
+      const csv = 'sep=;\r\n' + [cols.join(';')].concat(lista.map(f =>
         cols.map(c => {
           const v = String(f[c] ?? '');
           return /[",;\n]/.test(v) ? '"' + v.replace(/"/g,'""') + '"' : v;
